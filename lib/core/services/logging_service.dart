@@ -4,8 +4,6 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:sentry_flutter/sentry_flutter.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 /// Log levels for categorizing messages
 enum LogLevel { debug, info, warning, error }
@@ -50,9 +48,7 @@ class LogEntry {
 
 /// Centralized logging service with:
 /// - Rolling in-memory buffer (last 500 entries)
-/// - Sentry breadcrumbs integration
-/// - Local file fallback (flushed periodically)
-/// - User opt-out support
+/// - Local file logging (flushed periodically)
 class LoggingService {
   static final LoggingService _instance = LoggingService._internal();
   factory LoggingService() => _instance;
@@ -73,12 +69,6 @@ class LoggingService {
   /// In-memory log buffer (circular)
   final Queue<LogEntry> _buffer = Queue<LogEntry>();
 
-  /// Whether Sentry is initialized
-  bool _sentryInitialized = false;
-
-  /// Whether user has opted out of crash reporting
-  bool _crashReportingEnabled = true;
-
   /// File for local logging
   File? _logFile;
 
@@ -88,77 +78,19 @@ class LoggingService {
   /// Pending logs to write to file
   final List<LogEntry> _pendingFileWrites = [];
 
-  /// Settings key for crash reporting opt-out
-  static const String _crashReportingKey = 'crash_reporting_enabled';
-
   /// Initialize the logging service
   Future<void> initialize({
-    required String? sentryDsn,
+    String? sentryDsn, // Kept for API compatibility, ignored
     String? environment,
     String? release,
   }) async {
-    // Load user preference for crash reporting
-    final prefs = await SharedPreferences.getInstance();
-    _crashReportingEnabled = prefs.getBool(_crashReportingKey) ?? true;
-
     // Initialize local file logging
     await _initializeFileLogging();
 
     // Start periodic flush timer
     _flushTimer = Timer.periodic(flushInterval, (_) => flushToFile());
 
-    // Initialize Sentry if DSN provided and user hasn't opted out
-    if (sentryDsn != null && sentryDsn.isNotEmpty && _crashReportingEnabled) {
-      await _initializeSentry(
-        dsn: sentryDsn,
-        environment: environment,
-        release: release,
-      );
-    } else if (!_crashReportingEnabled) {
-      debugPrint('[LoggingService] Crash reporting disabled by user');
-    } else {
-      debugPrint(
-        '[LoggingService] No Sentry DSN configured, using file logging only',
-      );
-    }
-
-    info('LoggingService', 'Logging service initialized');
-  }
-
-  Future<void> _initializeSentry({
-    required String dsn,
-    String? environment,
-    String? release,
-  }) async {
-    try {
-      await SentryFlutter.init((options) {
-        options.dsn = dsn;
-        options.environment =
-            environment ?? (kReleaseMode ? 'production' : 'development');
-        options.release = release;
-
-        // beforeSend can be used for filtering if needed
-        // Events are sent as-is with breadcrumbs attached automatically
-
-        // Performance monitoring (optional, can be disabled)
-        options.tracesSampleRate = kReleaseMode ? 0.1 : 0.0;
-
-        // Attach screenshots on crash (helpful for UI issues)
-        options.attachScreenshot = true;
-
-        // Capture failed HTTP requests
-        options.captureFailedRequests = true;
-
-        // Maximum breadcrumbs to keep
-        options.maxBreadcrumbs = 100;
-      });
-
-      _sentryInitialized = true;
-      debugPrint('[LoggingService] Sentry initialized successfully');
-    } catch (e) {
-      debugPrint('[LoggingService] Failed to initialize Sentry: $e');
-      // Continue with file-only logging
-    }
+    info('LoggingService', 'Logging service initialized (file logging only)');
   }
 
   Future<void> _initializeFileLogging() async {
@@ -252,32 +184,6 @@ class LoggingService {
     if (!kReleaseMode) {
       debugPrint(entry.formatted);
     }
-
-    // Add as Sentry breadcrumb
-    if (_sentryInitialized && _crashReportingEnabled) {
-      Sentry.addBreadcrumb(
-        Breadcrumb(
-          message: '[$tag] $message',
-          level: _toSentryLevel(level),
-          category: tag,
-          timestamp: entry.timestamp,
-          data: error != null ? {'error': error.toString()} : null,
-        ),
-      );
-    }
-  }
-
-  SentryLevel _toSentryLevel(LogLevel level) {
-    switch (level) {
-      case LogLevel.debug:
-        return SentryLevel.debug;
-      case LogLevel.info:
-        return SentryLevel.info;
-      case LogLevel.warning:
-        return SentryLevel.warning;
-      case LogLevel.error:
-        return SentryLevel.error;
-    }
   }
 
   /// Convenience methods for each log level
@@ -292,7 +198,7 @@ class LoggingService {
     StackTrace? stackTrace,
   }) => log(LogLevel.error, tag, message, error: error, stackTrace: stackTrace);
 
-  /// Capture an exception and send to Sentry
+  /// Capture an exception (logs locally)
   Future<void> captureException(
     Object exception, {
     StackTrace? stackTrace,
@@ -306,25 +212,6 @@ class LoggingService {
       error: exception,
       stackTrace: stackTrace,
     );
-
-    // Send to Sentry if enabled
-    if (_sentryInitialized && _crashReportingEnabled) {
-      await Sentry.captureException(
-        exception,
-        stackTrace: stackTrace,
-        withScope: (scope) {
-          if (tag != null) scope.setTag('source', tag);
-          if (extras != null) {
-            extras.forEach((key, value) => scope.setContexts(key, value));
-          }
-          // Attach recent logs
-          scope.setContexts(
-            'recent_logs',
-            {'logs': _buffer.take(50).map((e) => e.formatted).toList()},
-          );
-        },
-      );
-    }
   }
 
   /// Flush pending logs to file
@@ -370,30 +257,10 @@ class LoggingService {
     }
   }
 
-  /// Check if crash reporting is enabled
-  bool get isCrashReportingEnabled => _crashReportingEnabled;
-
-  /// Enable or disable crash reporting
-  Future<void> setCrashReportingEnabled(bool enabled) async {
-    _crashReportingEnabled = enabled;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_crashReportingKey, enabled);
-
-    if (!enabled && _sentryInitialized) {
-      // Close Sentry connection
-      await Sentry.close();
-      _sentryInitialized = false;
-      info('LoggingService', 'Crash reporting disabled');
-    }
-  }
-
   /// Clean up resources
   Future<void> dispose() async {
     _flushTimer?.cancel();
     await flushToFile();
-    if (_sentryInitialized) {
-      await Sentry.close();
-    }
   }
 }
 

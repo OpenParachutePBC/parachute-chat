@@ -42,7 +42,6 @@ dependencies:
   oauth2: ^2.0.2
   app_links: ^6.3.2
   crypto: ^3.0.3
-  flutter_dotenv: ^5.1.0
 
   # Utilities
   uuid: ^4.4.0
@@ -91,9 +90,6 @@ dependencies:
   # OTA Firmware Updates
   nordic_dfu: ^6.1.4
 
-  # Crash Reporting & Logging
-  sentry_flutter: ^9.0.0
-
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -121,7 +117,6 @@ flutter:
     - assets/firmware/
     - assets/models/
     - assets/icon/
-    - .env
 
 flutter_launcher_icons:
   android: true
