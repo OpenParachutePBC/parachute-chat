@@ -15,6 +15,7 @@ import '../widgets/session_selector.dart';
 import '../widgets/connection_status_banner.dart';
 import '../widgets/resume_marker.dart';
 import '../widgets/session_resume_banner.dart';
+import '../../settings/screens/settings_screen.dart';
 
 /// Main chat screen for AI conversations
 ///
@@ -253,8 +254,9 @@ If you have suggestions, show me the specific edits you'd recommend.''';
           // Connection status banner (shows when server unreachable)
           ConnectionStatusBanner(
             onSettings: () {
-              // Navigate to settings
-              Navigator.of(context).pushNamed('/settings');
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (context) => const SettingsScreen()),
+              );
             },
           ),
 
