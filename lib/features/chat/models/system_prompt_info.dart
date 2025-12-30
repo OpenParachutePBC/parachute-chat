@@ -1,4 +1,31 @@
+/// Information about a module's system prompt (from /api/modules/:mod/prompt)
+class ModulePromptInfo {
+  /// The current prompt content (from AGENTS.md or default)
+  final String content;
+
+  /// Whether AGENTS.md exists for this module
+  final bool exists;
+
+  /// The built-in default prompt
+  final String defaultPrompt;
+
+  const ModulePromptInfo({
+    required this.content,
+    required this.exists,
+    required this.defaultPrompt,
+  });
+
+  factory ModulePromptInfo.fromJson(Map<String, dynamic> json) {
+    return ModulePromptInfo(
+      content: json['content'] as String? ?? '',
+      exists: json['exists'] as bool? ?? false,
+      defaultPrompt: json['defaultPrompt'] as String? ?? '',
+    );
+  }
+}
+
 /// Information about the built-in default system prompt
+/// @deprecated Use ModulePromptInfo instead
 class DefaultPromptInfo {
   /// The actual prompt content
   final String content;
@@ -16,7 +43,7 @@ class DefaultPromptInfo {
     required this.content,
     required this.isActive,
     this.overrideFile,
-    required this.description,
+    this.description = '',
   });
 
   factory DefaultPromptInfo.fromJson(Map<String, dynamic> json) {
@@ -30,6 +57,7 @@ class DefaultPromptInfo {
 }
 
 /// Information about the user's AGENTS.md file
+/// @deprecated Use ModulePromptInfo instead
 class AgentsMdInfo {
   /// The content of AGENTS.md (null if doesn't exist)
   final String? content;

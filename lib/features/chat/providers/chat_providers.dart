@@ -3,9 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import '../models/chat_session.dart';
 import '../models/chat_message.dart';
-import '../models/agent.dart';
 import '../models/stream_event.dart';
-import '../models/context_file.dart';
 import '../models/session_resume_info.dart';
 import '../services/chat_service.dart';
 import '../services/local_session_reader.dart';
@@ -104,83 +102,6 @@ final sessionWithMessagesProvider =
   }
 });
 
-// ============================================================
-// Agent Providers
-// ============================================================
-
-/// Provider for fetching available agents
-final agentsProvider = FutureProvider<List<Agent>>((ref) async {
-  final service = ref.watch(chatServiceProvider);
-  try {
-    return await service.getAgents();
-  } catch (e) {
-    debugPrint('[ChatProviders] Error fetching agents: $e');
-    return [];
-  }
-});
-
-/// Provider for the currently selected agent
-///
-/// When null, uses the default vault agent.
-final selectedAgentProvider = StateProvider<Agent?>((ref) => null);
-
-// ============================================================
-// Context Providers
-// ============================================================
-
-/// Provider for fetching available context files from the vault
-///
-/// Returns a list of context files that can be loaded into chat sessions.
-/// The server reads these from the vault's contexts/ folder.
-final availableContextsProvider = FutureProvider<List<ContextFile>>((ref) async {
-  final service = ref.watch(chatServiceProvider);
-  try {
-    return await service.getContexts();
-  } catch (e) {
-    debugPrint('[ChatProviders] Error fetching contexts: $e');
-    return [];
-  }
-});
-
-/// Provider for the currently selected contexts for a chat session
-///
-/// By default, includes general-context.md if it exists.
-/// Users can add or remove contexts before starting a chat.
-final selectedContextsProvider = StateProvider<List<ContextFile>>((ref) {
-  // Auto-select the default context (general-context.md) when available
-  final contextsAsync = ref.watch(availableContextsProvider);
-  return contextsAsync.when(
-    data: (contexts) => contexts.where((c) => c.isDefault).toList(),
-    loading: () => [],
-    error: (_, __) => [],
-  );
-});
-
-/// Provider for toggling context selection
-final toggleContextProvider = Provider<void Function(ContextFile)>((ref) {
-  return (ContextFile context) {
-    final current = ref.read(selectedContextsProvider);
-    final isSelected = current.any((c) => c.path == context.path);
-
-    if (isSelected) {
-      ref.read(selectedContextsProvider.notifier).state =
-          current.where((c) => c.path != context.path).toList();
-    } else {
-      ref.read(selectedContextsProvider.notifier).state = [...current, context];
-    }
-  };
-});
-
-/// Clear selected contexts (reset to defaults)
-final resetContextsProvider = Provider<void Function()>((ref) {
-  return () {
-    final contextsAsync = ref.read(availableContextsProvider);
-    contextsAsync.whenData((contexts) {
-      ref.read(selectedContextsProvider.notifier).state =
-          contexts.where((c) => c.isDefault).toList();
-    });
-  };
-});
 
 // ============================================================
 // Chat State Management
@@ -443,21 +364,16 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
 
   /// Send a message and handle streaming response
   ///
-  /// [contexts] - List of context file paths to load. If not provided,
-  /// the server will load general-context.md by default.
+  /// [systemPrompt] - Custom system prompt for this session
+  /// If not provided, the server will use the module's AGENTS.md or default prompt.
   ///
   /// [priorConversation] - For continued conversations, prior messages
   /// formatted as text. Goes into system prompt, not shown in chat.
-  ///
-  /// [workingDirectory] - Directory for Claude to operate in (for external codebases)
-  /// Sessions are still stored in the vault, but file operations target this directory.
   Future<void> sendMessage({
     required String message,
-    String? agentPath,
+    String? systemPrompt,
     String? initialContext,
-    List<String>? contexts,
     String? priorConversation,
-    String? workingDirectory,
   }) async {
     if (state.isStreaming) return;
 
@@ -522,12 +438,10 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
       await for (final event in _service.streamChat(
         sessionId: sessionId,
         message: message,
-        agentPath: agentPath,
+        systemPrompt: systemPrompt,
         initialContext: initialContext,
-        contexts: contexts,
         priorConversation: effectivePriorConversation,
         continuedFrom: continuedFromId,
-        workingDirectory: workingDirectory,
       )) {
         // Check if session has changed (user switched chats during stream)
         if (_activeStreamSessionId != sessionId) {
@@ -800,113 +714,13 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
       );
     }
 
-    // Retry the original message with recovery mode
-    // We pass the recoveryMode through to the service
-    await _sendMessageWithRecovery(
-      message: unavailableInfo.pendingMessage,
-      sessionId: unavailableInfo.sessionId,
-      recoveryMode: recoveryMode,
-    );
+    // Retry the original message
+    await sendMessage(message: unavailableInfo.pendingMessage);
   }
 
   /// Dismiss the session unavailable dialog without retrying
   void dismissSessionUnavailable() {
     state = state.copyWith(clearSessionUnavailable: true);
-  }
-
-  /// Internal method to send message with recovery mode
-  Future<void> _sendMessageWithRecovery({
-    required String message,
-    required String sessionId,
-    required String recoveryMode,
-  }) async {
-    if (state.isStreaming) return;
-
-    // Add user message immediately
-    final userMessage = ChatMessage.user(
-      sessionId: sessionId,
-      text: message,
-    );
-
-    // Create placeholder for assistant response
-    final assistantMessage = ChatMessage.assistantPlaceholder(
-      sessionId: sessionId,
-    );
-
-    // Mark this session as the active stream
-    _activeStreamSessionId = sessionId;
-
-    state = state.copyWith(
-      messages: [...state.messages, userMessage, assistantMessage],
-      isStreaming: true,
-      sessionId: sessionId,
-      error: null,
-    );
-
-    // Track accumulated content for streaming
-    List<MessageContent> accumulatedContent = [];
-    String? actualSessionId;
-
-    try {
-      await for (final event in _service.streamChat(
-        sessionId: sessionId,
-        message: message,
-        recoveryMode: recoveryMode,
-      )) {
-        // Ignore events from old streams
-        if (_activeStreamSessionId != sessionId) {
-          debugPrint('[ChatMessagesNotifier] Ignoring event from old stream');
-          break;
-        }
-
-        switch (event.type) {
-          case StreamEventType.session:
-            actualSessionId = event.sessionId ?? actualSessionId;
-            if (actualSessionId != null) {
-              _ref.read(currentSessionIdProvider.notifier).state = actualSessionId;
-            }
-            break;
-
-          case StreamEventType.text:
-            final text = event.textContent ?? '';
-            accumulatedContent = [MessageContent.text(text)];
-            _updateAssistantMessage(accumulatedContent, isStreaming: true);
-            break;
-
-          case StreamEventType.done:
-            final doneSessionId = event.sessionId;
-            if (doneSessionId != null && doneSessionId.isNotEmpty) {
-              actualSessionId = doneSessionId;
-              _ref.read(currentSessionIdProvider.notifier).state = doneSessionId;
-            }
-            state = state.copyWith(
-              isStreaming: false,
-              sessionId: actualSessionId,
-              sessionTitle: event.sessionTitle,
-              sessionResumeInfo: event.sessionResumeInfo,
-            );
-            _updateAssistantMessage(accumulatedContent, isStreaming: false);
-            break;
-
-          case StreamEventType.error:
-            state = state.copyWith(
-              isStreaming: false,
-              error: event.errorMessage,
-            );
-            break;
-
-          default:
-            // Handle other events normally
-            break;
-        }
-      }
-    } catch (e) {
-      debugPrint('[ChatMessagesNotifier] Recovery stream error: $e');
-      state = state.copyWith(
-        isStreaming: false,
-        error: e.toString(),
-      );
-    }
   }
 }
 

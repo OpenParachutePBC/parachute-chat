@@ -7,7 +7,6 @@ import 'package:parachute_chat/features/context/providers/context_providers.dart
 import 'package:parachute_chat/features/context/widgets/prompt_chip.dart';
 import 'package:parachute_chat/features/context/widgets/reflection_banner.dart';
 import '../models/chat_session.dart';
-import '../models/context_file.dart';
 import '../providers/chat_providers.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/chat_input.dart';
@@ -97,17 +96,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   void _handleSend(String message) {
-    final selectedAgent = ref.read(selectedAgentProvider);
-    final selectedContexts = ref.read(selectedContextsProvider);
-
-    // Convert selected context files to paths for the API
-    final contextPaths = selectedContexts.map((c) => c.path).toList();
-
     ref.read(chatMessagesProvider.notifier).sendMessage(
           message: message,
-          agentPath: selectedAgent?.path,
           initialContext: _pendingInitialContext,
-          contexts: contextPaths.isNotEmpty ? contextPaths : null,
         );
 
     // Clear pending context after first message
@@ -439,8 +430,6 @@ If you have suggestions, show me the specific edits you'd recommend.''';
 
   Widget _buildEmptyState(BuildContext context, bool isDark) {
     final promptsAsync = ref.watch(promptsProvider);
-    final availableContexts = ref.watch(availableContextsProvider);
-    final selectedContexts = ref.watch(selectedContextsProvider);
 
     return SingleChildScrollView(
       child: Center(
@@ -483,15 +472,6 @@ If you have suggestions, show me the specific edits you'd recommend.''';
                     : BrandColors.driftwood,
                 height: TypographyTokens.lineHeightRelaxed,
               ),
-            ),
-            const SizedBox(height: Spacing.xl),
-            // Context selector
-            availableContexts.when(
-              data: (contexts) => contexts.isEmpty
-                  ? const SizedBox.shrink()
-                  : _buildContextSelector(context, isDark, contexts, selectedContexts),
-              loading: () => const SizedBox.shrink(),
-              error: (_, __) => const SizedBox.shrink(),
             ),
             const SizedBox(height: Spacing.xl),
             // Quick action prompts from prompts.yaml
@@ -588,154 +568,6 @@ If you have suggestions, show me the specific edits you'd recommend.''';
             padding: EdgeInsets.zero,
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildContextSelector(
-    BuildContext context,
-    bool isDark,
-    List<ContextFile> availableContexts,
-    List<ContextFile> selectedContexts,
-  ) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.folder_outlined,
-              size: 14,
-              color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-            ),
-            const SizedBox(width: Spacing.xs),
-            Text(
-              'Contexts',
-              style: TextStyle(
-                fontSize: TypographyTokens.labelSmall,
-                color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: Spacing.sm),
-        Wrap(
-          spacing: Spacing.xs,
-          runSpacing: Spacing.xs,
-          alignment: WrapAlignment.center,
-          children: [
-            // Show selected contexts as chips
-            ...selectedContexts.map((ctx) => _ContextChip(
-              context: ctx,
-              isSelected: true,
-              onToggle: () => ref.read(toggleContextProvider)(ctx),
-            )),
-            // Show add button if there are more contexts to add
-            if (availableContexts.length > selectedContexts.length)
-              _AddContextButton(
-                onTap: () => _showContextPicker(context, isDark, availableContexts, selectedContexts),
-              ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  void _showContextPicker(
-    BuildContext context,
-    bool isDark,
-    List<ContextFile> available,
-    List<ContextFile> selected,
-  ) {
-    final unselected = available.where(
-      (c) => !selected.any((s) => s.path == c.path),
-    ).toList();
-
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: isDark ? BrandColors.nightSurfaceElevated : BrandColors.softWhite,
-      isScrollControlled: true,
-      constraints: BoxConstraints(
-        maxHeight: MediaQuery.of(context).size.height * 0.6,
-      ),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(Radii.xl)),
-      ),
-      builder: (sheetContext) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(Spacing.lg),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Add Context',
-                style: TextStyle(
-                  fontSize: TypographyTokens.titleMedium,
-                  fontWeight: FontWeight.w600,
-                  color: isDark ? BrandColors.nightText : BrandColors.charcoal,
-                ),
-              ),
-              const SizedBox(height: Spacing.sm),
-              Text(
-                'Select context files to include in this conversation',
-                style: TextStyle(
-                  fontSize: TypographyTokens.bodySmall,
-                  color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-                ),
-              ),
-              const SizedBox(height: Spacing.lg),
-              if (unselected.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: Spacing.lg),
-                  child: Center(
-                    child: Text(
-                      'All contexts are selected',
-                      style: TextStyle(
-                        color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-                      ),
-                    ),
-                  ),
-                )
-              else
-                Flexible(
-                  child: ListView(
-                    shrinkWrap: true,
-                    children: unselected.map((ctx) => ListTile(
-                      leading: Icon(
-                        Icons.description_outlined,
-                        color: isDark ? BrandColors.nightForest : BrandColors.forest,
-                      ),
-                      title: Text(
-                        ctx.title,
-                        style: TextStyle(
-                          color: isDark ? BrandColors.nightText : BrandColors.charcoal,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      subtitle: ctx.description.isNotEmpty
-                          ? Text(
-                              ctx.description,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: TypographyTokens.labelSmall,
-                                color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-                              ),
-                            )
-                          : null,
-                      onTap: () {
-                        ref.read(toggleContextProvider)(ctx);
-                        Navigator.of(sheetContext).pop();
-                      },
-                    )).toList(),
-                  ),
-                ),
-              const SizedBox(height: Spacing.md),
-            ],
-          ),
-        ),
       ),
     );
   }
@@ -953,86 +785,3 @@ class _SuggestionChip extends StatelessWidget {
   }
 }
 
-/// Chip for displaying a selected context file
-class _ContextChip extends StatelessWidget {
-  final ContextFile context;
-  final bool isSelected;
-  final VoidCallback onToggle;
-
-  const _ContextChip({
-    required this.context,
-    required this.isSelected,
-    required this.onToggle,
-  });
-
-  @override
-  Widget build(BuildContext buildContext) {
-    final theme = Theme.of(buildContext);
-    final isDark = theme.brightness == Brightness.dark;
-
-    return InputChip(
-      label: Text(context.title),
-      onDeleted: isSelected ? onToggle : null,
-      deleteIcon: const Icon(Icons.close, size: 14),
-      deleteIconColor: isDark ? BrandColors.nightForest : BrandColors.forest,
-      backgroundColor: isDark
-          ? BrandColors.nightForest.withValues(alpha: 0.15)
-          : BrandColors.forestMist.withValues(alpha: 0.5),
-      labelStyle: TextStyle(
-        fontSize: TypographyTokens.labelSmall,
-        color: isDark ? BrandColors.nightForest : BrandColors.forest,
-      ),
-      shape: RoundedRectangleBorder(
-        borderRadius: Radii.badge,
-        side: BorderSide(
-          color: isDark
-              ? BrandColors.nightForest.withValues(alpha: 0.3)
-              : BrandColors.forest.withValues(alpha: 0.3),
-        ),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: Spacing.xs),
-      visualDensity: VisualDensity.compact,
-    );
-  }
-}
-
-/// Button to add more context files
-class _AddContextButton extends StatelessWidget {
-  final VoidCallback onTap;
-
-  const _AddContextButton({required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-
-    return ActionChip(
-      avatar: Icon(
-        Icons.add,
-        size: 14,
-        color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-      ),
-      label: Text(
-        'Add',
-        style: TextStyle(
-          fontSize: TypographyTokens.labelSmall,
-          color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-        ),
-      ),
-      onPressed: onTap,
-      backgroundColor: Colors.transparent,
-      shape: RoundedRectangleBorder(
-        borderRadius: Radii.badge,
-        side: BorderSide(
-          color: isDark
-              ? BrandColors.nightSurfaceElevated
-              : BrandColors.stone.withValues(alpha: 0.5),
-          style: BorderStyle.solid,
-        ),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: Spacing.xs),
-      visualDensity: VisualDensity.compact,
-    );
-  }
-}

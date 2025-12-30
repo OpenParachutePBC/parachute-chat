@@ -228,24 +228,33 @@ flutter test                    # Run tests
 
 ## Server Communication
 
+Uses the Base server's simplified 8-endpoint API.
+
 ### ChatService API Methods
 
 ```dart
-// Send message with streaming response
-Stream<ChatEvent> sendMessageStreaming(String message, {String? sessionId});
+// Send message with streaming response (POST /api/chat)
+Stream<StreamEvent> streamChat({
+  required String sessionId,
+  required String message,
+  String? systemPrompt,
+  String? initialContext,
+  String? priorConversation,
+  String? continuedFrom,
+});
 
-// List sessions (paginated)
-Future<List<SessionSummary>> listSessions({int offset = 0, int limit = 50});
+// List sessions (GET /api/chat)
+Future<List<ChatSession>> getSessions();
 
-// Get session by ID with full messages
-Future<ChatSession?> getSession(String sessionId);
+// Get session by ID with full messages (GET /api/chat/:id)
+Future<ChatSessionWithMessages?> getSession(String sessionId);
 
-// Archive/unarchive sessions
-Future<void> archiveSession(String sessionId);
-Future<void> unarchiveSession(String sessionId);
-
-// Delete session
+// Delete session (DELETE /api/chat/:id)
 Future<void> deleteSession(String sessionId);
+
+// Module prompt (GET/PUT /api/modules/:mod/prompt)
+Future<ModulePromptInfo> getModulePrompt({String module = 'chat'});
+Future<void> saveModulePrompt(String content, {String module = 'chat'});
 ```
 
 ### Server URL Configuration

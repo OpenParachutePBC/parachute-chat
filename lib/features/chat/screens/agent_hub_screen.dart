@@ -232,12 +232,7 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
   }
 
   Future<void> _refreshSessions() async {
-    // First, tell the server to reload its session index from disk
-    // This ensures we get fresh data even if files changed externally
-    final chatService = ref.read(chatServiceProvider);
-    await chatService.reloadSessionIndex();
-
-    // Then invalidate the provider to fetch the updated list
+    // Invalidate the provider to fetch the updated list
     ref.invalidate(chatSessionsProvider);
     await ref.read(chatSessionsProvider.future);
   }
@@ -562,7 +557,6 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
 
   void _startNewChat(BuildContext context) {
     ref.read(newChatProvider)();
-    ref.read(selectedAgentProvider.notifier).state = null;
 
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -573,7 +567,6 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
 
   void _startNewChatWithPrompt(BuildContext context, String prompt) {
     ref.read(newChatProvider)();
-    ref.read(selectedAgentProvider.notifier).state = null;
 
     Navigator.of(context).push(
       MaterialPageRoute(
