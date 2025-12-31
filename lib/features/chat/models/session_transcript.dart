@@ -35,77 +35,81 @@ class SessionTranscript {
   /// Groups events by conversation turn, combining:
   /// - User messages
   /// - Assistant text, tool calls, and thinking blocks
+  ///
+  /// The SDK sends multiple `assistant` events during streaming, where each
+  /// event contains the FULL accumulated content up to that point (not deltas).
+  /// So we only use the LAST assistant event before the next user message.
   List<ChatMessage> toMessages() {
     final messages = <ChatMessage>[];
-    String? currentUserContent;
-    List<MessageContent> currentAssistantContent = [];
-    DateTime? currentTimestamp;
-    String? currentMessageId;
+
+    // First pass: identify turn boundaries (user messages mark the start of turns)
+    // and collect the last assistant event for each turn
+    final turns = <_ConversationTurn>[];
+    _ConversationTurn? currentTurn;
 
     for (final event in events) {
       if (event.type == 'user' && event.message != null) {
-        // Save any pending assistant message
-        if (currentAssistantContent.isNotEmpty) {
-          messages.add(ChatMessage(
-            id: currentMessageId ?? DateTime.now().millisecondsSinceEpoch.toString(),
-            sessionId: sessionId,
-            role: MessageRole.assistant,
-            content: currentAssistantContent,
-            timestamp: currentTimestamp ?? DateTime.now(),
-          ));
-          currentAssistantContent = [];
+        // Save previous turn if any
+        if (currentTurn != null) {
+          turns.add(currentTurn);
         }
+        // Start new turn with this user message
+        currentTurn = _ConversationTurn(userEvent: event);
+      } else if (event.type == 'assistant' && event.message != null) {
+        // Update the last assistant event for current turn
+        // (each assistant event contains full accumulated content)
+        if (currentTurn != null) {
+          currentTurn.lastAssistantEvent = event;
+        }
+      }
+    }
+    // Don't forget the last turn
+    if (currentTurn != null) {
+      turns.add(currentTurn);
+    }
 
-        // Parse user message content
-        final content = event.message!['content'];
-        String userText = '';
-        if (content is String) {
-          userText = content;
-        } else if (content is List) {
-          for (final block in content) {
-            if (block is Map && block['type'] == 'text') {
-              userText += block['text'] as String? ?? '';
-            }
+    // Second pass: convert turns to messages
+    for (final turn in turns) {
+      // Add user message
+      final userContent = turn.userEvent.message!['content'];
+      String userText = '';
+      if (userContent is String) {
+        userText = userContent;
+      } else if (userContent is List) {
+        for (final block in userContent) {
+          if (block is Map && block['type'] == 'text') {
+            userText += block['text'] as String? ?? '';
           }
         }
+      }
 
-        if (userText.isNotEmpty) {
-          messages.add(ChatMessage(
-            id: event.uuid ?? DateTime.now().millisecondsSinceEpoch.toString(),
-            sessionId: sessionId,
-            role: MessageRole.user,
-            content: [MessageContent.text(userText)],
-            timestamp: event.timestamp ?? DateTime.now(),
-          ));
-        }
+      if (userText.isNotEmpty) {
+        messages.add(ChatMessage(
+          id: turn.userEvent.uuid ?? DateTime.now().millisecondsSinceEpoch.toString(),
+          sessionId: sessionId,
+          role: MessageRole.user,
+          content: [MessageContent.text(userText)],
+          timestamp: turn.userEvent.timestamp ?? DateTime.now(),
+        ));
+      }
 
-        currentTimestamp = event.timestamp;
-        currentMessageId = null;
-      } else if (event.type == 'assistant' && event.message != null) {
-        currentTimestamp ??= event.timestamp;
-        currentMessageId ??= event.uuid;
+      // Add assistant message (from the last assistant event in this turn)
+      if (turn.lastAssistantEvent != null) {
+        final assistantContent = <MessageContent>[];
+        final content = turn.lastAssistantEvent!.message!['content'];
 
-        // Parse assistant message content blocks
-        final content = event.message!['content'];
         if (content is List) {
           for (final block in content) {
             if (block is! Map) continue;
-
             final blockType = block['type'] as String?;
 
             if (blockType == 'text') {
               final text = block['text'] as String? ?? '';
               if (text.isNotEmpty) {
-                // Check if we should append to existing text or create new
-                if (currentAssistantContent.isNotEmpty &&
-                    currentAssistantContent.last.type == ContentType.text) {
-                  // Replace last text with updated version (streaming accumulates)
-                  currentAssistantContent.removeLast();
-                }
-                currentAssistantContent.add(MessageContent.text(text));
+                assistantContent.add(MessageContent.text(text));
               }
             } else if (blockType == 'tool_use') {
-              currentAssistantContent.add(MessageContent.toolUse(ToolCall(
+              assistantContent.add(MessageContent.toolUse(ToolCall(
                 id: block['id'] as String? ?? '',
                 name: block['name'] as String? ?? '',
                 input: block['input'] as Map<String, dynamic>? ?? {},
@@ -113,27 +117,34 @@ class SessionTranscript {
             } else if (blockType == 'thinking') {
               final thinking = block['thinking'] as String? ?? '';
               if (thinking.isNotEmpty) {
-                currentAssistantContent.add(MessageContent.thinking(thinking));
+                assistantContent.add(MessageContent.thinking(thinking));
               }
             }
           }
         }
-      }
-    }
 
-    // Don't forget the last assistant message
-    if (currentAssistantContent.isNotEmpty) {
-      messages.add(ChatMessage(
-        id: currentMessageId ?? DateTime.now().millisecondsSinceEpoch.toString(),
-        sessionId: sessionId,
-        role: MessageRole.assistant,
-        content: currentAssistantContent,
-        timestamp: currentTimestamp ?? DateTime.now(),
-      ));
+        if (assistantContent.isNotEmpty) {
+          messages.add(ChatMessage(
+            id: turn.lastAssistantEvent!.uuid ?? DateTime.now().millisecondsSinceEpoch.toString(),
+            sessionId: sessionId,
+            role: MessageRole.assistant,
+            content: assistantContent,
+            timestamp: turn.lastAssistantEvent!.timestamp ?? DateTime.now(),
+          ));
+        }
+      }
     }
 
     return messages;
   }
+}
+
+/// Helper class to track a conversation turn
+class _ConversationTurn {
+  final TranscriptEvent userEvent;
+  TranscriptEvent? lastAssistantEvent;
+
+  _ConversationTurn({required this.userEvent});
 }
 
 /// A single event from the SDK transcript

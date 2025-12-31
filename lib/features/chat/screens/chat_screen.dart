@@ -53,6 +53,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   bool _hasAutoRun = false;
   bool _resumeBannerDismissed = false;
 
+  /// Track message count to detect when messages are loaded
+  int _previousMessageCount = 0;
+
   @override
   void initState() {
     super.initState();
@@ -64,6 +67,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         _performAutoRun();
       });
     }
+
+    // Scroll to bottom after first frame if messages are loaded
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollToBottomInstant();
+    });
   }
 
   void _performAutoRun() {
@@ -86,6 +94,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           duration: Motion.standard,
           curve: Motion.settling,
         );
+      });
+    }
+  }
+
+  /// Scroll to bottom instantly (no animation) - for initial load
+  void _scrollToBottomInstant() {
+    if (_scrollController.hasClients) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scrollController.hasClients) {
+          _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+        }
       });
     }
   }
@@ -179,8 +198,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
     // Auto-scroll when new messages arrive
     ref.listen(chatMessagesProvider, (previous, next) {
-      if (next.messages.length != (previous?.messages.length ?? 0)) {
-        _scrollToBottom();
+      final prevCount = previous?.messages.length ?? 0;
+      final nextCount = next.messages.length;
+
+      if (nextCount != prevCount) {
+        // If loading a session (0 -> many messages), scroll instantly
+        // Otherwise animate for streaming/new messages
+        if (prevCount == 0 && nextCount > 1) {
+          _scrollToBottomInstant();
+        } else {
+          _scrollToBottom();
+        }
       }
 
       // Reset resume banner when session changes
