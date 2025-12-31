@@ -5,6 +5,7 @@ import '../models/chat_session.dart';
 import '../models/chat_message.dart';
 import '../models/stream_event.dart';
 import '../models/session_resume_info.dart';
+import '../models/session_transcript.dart';
 import '../models/vault_entry.dart';
 import '../services/chat_service.dart';
 import '../services/local_session_reader.dart';
@@ -231,7 +232,8 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
 
   /// Load messages for a session
   ///
-  /// Tries the server first, falls back to local files for imported/local sessions.
+  /// First tries to load the rich SDK transcript (with tool calls, thinking, etc.),
+  /// then falls back to markdown messages, then local files.
   /// Also cancels any active stream by invalidating the stream session ID.
   /// If the session was continued from another session, loads prior messages too.
   Future<void> loadSession(String sessionId, {bool isLocal = false}) async {
@@ -241,14 +243,28 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
     try {
       ChatSession? loadedSession;
       List<ChatMessage> loadedMessages = [];
+      bool usedTranscript = false;
 
       // Try server first unless we know it's local
       if (!isLocal) {
         try {
+          // First try to get the rich transcript (has tool calls, thinking, etc.)
+          final transcript = await _service.getSessionTranscript(sessionId);
+          if (transcript != null && transcript.events.isNotEmpty) {
+            loadedMessages = transcript.toMessages();
+            usedTranscript = true;
+            debugPrint('[ChatMessagesNotifier] Loaded ${loadedMessages.length} messages from SDK transcript (${transcript.eventCount} events)');
+          }
+
+          // Get session metadata (we still need this for title, workingDirectory, etc.)
           final sessionData = await _service.getSession(sessionId);
           if (sessionData != null) {
             loadedSession = sessionData.session;
-            loadedMessages = sessionData.messages;
+            // Only use markdown messages if transcript didn't provide any
+            if (!usedTranscript || loadedMessages.isEmpty) {
+              loadedMessages = sessionData.messages;
+              debugPrint('[ChatMessagesNotifier] Using ${loadedMessages.length} messages from markdown');
+            }
           }
         } catch (e) {
           debugPrint('[ChatMessagesNotifier] Server unavailable, trying local: $e');
@@ -289,7 +305,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
 
       // SIMPLIFIED: The session id IS the SDK session ID now
       // Just use it directly for all API calls
-      debugPrint('[ChatMessagesNotifier] Loading session with ID: $sessionId');
+      debugPrint('[ChatMessagesNotifier] Loading session with ID: $sessionId (usedTranscript: $usedTranscript)');
 
       state = ChatMessagesState(
         messages: loadedMessages,
@@ -300,7 +316,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         priorMessages: priorMessages,
         continuedFromSession: continuedFromSession,
       );
-      trace.end(additionalData: {'messageCount': loadedMessages.length});
+      trace.end(additionalData: {'messageCount': loadedMessages.length, 'usedTranscript': usedTranscript});
     } catch (e) {
       trace.end(additionalData: {'error': e.toString()});
       _log.error('Error loading session', error: e);

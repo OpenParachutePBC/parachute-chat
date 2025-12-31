@@ -7,6 +7,7 @@ import '../models/chat_message.dart';
 import '../models/stream_event.dart';
 import '../models/system_prompt_info.dart';
 import '../models/vault_entry.dart';
+import '../models/session_transcript.dart';
 
 /// Service for communicating with the parachute-base backend
 ///
@@ -101,6 +102,34 @@ class ChatService {
     } catch (e) {
       debugPrint('[ChatService] Error deleting session: $e');
       rethrow;
+    }
+  }
+
+  /// Get the full SDK transcript for a session
+  ///
+  /// Returns rich event history including tool calls, thinking blocks, etc.
+  /// This is more detailed than the markdown-based messages.
+  Future<SessionTranscript?> getSessionTranscript(String sessionId) async {
+    try {
+      final response = await _client.get(
+        Uri.parse('$baseUrl/api/chat/${Uri.encodeComponent(sessionId)}/transcript'),
+        headers: {'Content-Type': 'application/json'},
+      ).timeout(const Duration(seconds: 60)); // Transcripts can be large
+
+      if (response.statusCode == 404) {
+        debugPrint('[ChatService] No transcript available for session $sessionId');
+        return null;
+      }
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to get transcript: ${response.statusCode}');
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return SessionTranscript.fromJson(data);
+    } catch (e) {
+      debugPrint('[ChatService] Error getting transcript: $e');
+      return null; // Don't rethrow - transcript is optional enhancement
     }
   }
 
