@@ -22,30 +22,22 @@ class WelcomeStep extends StatelessWidget {
           children: [
             SizedBox(height: Spacing.xl),
 
-            // App icon with brand styling
+            // Parachute logo
             Container(
               width: 120,
               height: 120,
               decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    isDark
-                        ? BrandColors.nightForest.withValues(alpha: 0.3)
-                        : BrandColors.forestMist,
-                    isDark
-                        ? BrandColors.nightTurquoise.withValues(alpha: 0.2)
-                        : BrandColors.turquoiseMist,
-                  ],
-                ),
                 borderRadius: BorderRadius.circular(Radii.xl),
                 boxShadow: isDark ? null : Elevation.cardShadow,
               ),
-              child: Icon(
-                Icons.mic_rounded,
-                size: 56,
-                color: isDark ? BrandColors.nightForest : BrandColors.forest,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(Radii.xl),
+                child: Image.asset(
+                  'assets/icon/parachute_icon.png',
+                  width: 120,
+                  height: 120,
+                  fit: BoxFit.cover,
+                ),
               ),
             ),
 
