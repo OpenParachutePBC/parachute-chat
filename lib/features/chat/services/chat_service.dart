@@ -360,6 +360,12 @@ class ChatService {
       }
 
       debugPrint('[ChatService] Stream completed');
+      // If we get here without a done event, the stream ended unexpectedly
+      // Yield a done event so the UI knows streaming has stopped
+      yield StreamEvent(
+        type: StreamEventType.done,
+        data: {'note': 'Stream ended without explicit done event'},
+      );
     } catch (e) {
       debugPrint('[ChatService] Stream error: $e');
       yield StreamEvent(

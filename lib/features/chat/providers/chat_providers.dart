@@ -664,6 +664,13 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
             break;
         }
       }
+
+      // If we exited the loop without a done/error event (e.g., session switch or unexpected stream end),
+      // make sure to stop streaming state so the user can send another message
+      if (state.isStreaming) {
+        debugPrint('[ChatMessagesNotifier] Stream ended without done event - cleaning up');
+        state = state.copyWith(isStreaming: false);
+      }
     } catch (e) {
       debugPrint('[ChatMessagesNotifier] Stream error: $e');
       state = state.copyWith(
@@ -674,6 +681,12 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         [MessageContent.text('Error: $e')],
         isStreaming: false,
       );
+    } finally {
+      // Final safety net: ensure streaming is always stopped when sendMessage exits
+      if (state.isStreaming && _activeStreamSessionId == sessionId) {
+        debugPrint('[ChatMessagesNotifier] Finally block cleanup - forcing streaming off');
+        state = state.copyWith(isStreaming: false);
+      }
     }
   }
 

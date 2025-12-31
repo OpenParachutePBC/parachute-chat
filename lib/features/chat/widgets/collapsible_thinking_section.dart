@@ -24,12 +24,17 @@ class CollapsibleThinkingSection extends StatefulWidget {
 
 class _CollapsibleThinkingSectionState extends State<CollapsibleThinkingSection> {
   final Set<int> _expandedTools = {};
+  bool _sectionExpanded = false;
 
   @override
   Widget build(BuildContext context) {
     if (widget.items.isEmpty) {
       return const SizedBox.shrink();
     }
+
+    // Count tools and thinking blocks for summary
+    final toolCount = widget.items.where((i) => i.type == ContentType.toolUse).length;
+    final thinkingCount = widget.items.where((i) => i.type == ContentType.thinking).length;
 
     return Padding(
       padding: const EdgeInsets.only(
@@ -39,19 +44,82 @@ class _CollapsibleThinkingSectionState extends State<CollapsibleThinkingSection>
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: widget.items.asMap().entries.map((entry) {
-          final index = entry.key;
-          final item = entry.value;
+        children: [
+          // Collapsible header for the whole section
+          GestureDetector(
+            onTap: () => setState(() => _sectionExpanded = !_sectionExpanded),
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: Spacing.sm,
+                vertical: Spacing.xs,
+              ),
+              decoration: BoxDecoration(
+                color: widget.isDark
+                    ? BrandColors.nightSurface.withValues(alpha: 0.3)
+                    : BrandColors.cream.withValues(alpha: 0.5),
+                borderRadius: BorderRadius.circular(Radii.sm),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    _sectionExpanded ? Icons.expand_less : Icons.expand_more,
+                    size: 16,
+                    color: widget.isDark
+                        ? BrandColors.nightTextSecondary
+                        : BrandColors.driftwood,
+                  ),
+                  const SizedBox(width: Spacing.xs),
+                  Icon(
+                    Icons.psychology_outlined,
+                    size: 14,
+                    color: widget.isDark
+                        ? BrandColors.nightTextSecondary
+                        : BrandColors.driftwood,
+                  ),
+                  const SizedBox(width: Spacing.xs),
+                  Text(
+                    _buildSummaryText(toolCount, thinkingCount),
+                    style: TextStyle(
+                      color: widget.isDark
+                          ? BrandColors.nightTextSecondary
+                          : BrandColors.driftwood,
+                      fontSize: TypographyTokens.labelSmall,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // Expanded content
+          if (_sectionExpanded) ...[
+            const SizedBox(height: Spacing.sm),
+            ...widget.items.asMap().entries.map((entry) {
+              final index = entry.key;
+              final item = entry.value;
 
-          if (item.type == ContentType.thinking) {
-            return _buildThinkingBlock(item.text ?? '');
-          } else if (item.type == ContentType.toolUse && item.toolCall != null) {
-            return _buildToolCall(index, item.toolCall!);
-          }
-          return const SizedBox.shrink();
-        }).toList(),
+              if (item.type == ContentType.thinking) {
+                return _buildThinkingBlock(item.text ?? '');
+              } else if (item.type == ContentType.toolUse && item.toolCall != null) {
+                return _buildToolCall(index, item.toolCall!);
+              }
+              return const SizedBox.shrink();
+            }),
+          ],
+        ],
       ),
     );
+  }
+
+  String _buildSummaryText(int toolCount, int thinkingCount) {
+    final parts = <String>[];
+    if (toolCount > 0) {
+      parts.add('$toolCount tool${toolCount > 1 ? 's' : ''}');
+    }
+    if (thinkingCount > 0) {
+      parts.add('$thinkingCount thought${thinkingCount > 1 ? 's' : ''}');
+    }
+    return parts.isEmpty ? 'Thinking...' : parts.join(', ');
   }
 
   /// Thinking block - shown expanded as muted text

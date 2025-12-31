@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'chat_message.dart';
 
 /// Represents the full SDK transcript for a session
@@ -115,6 +114,16 @@ class SessionTranscript {
                 pendingAssistantContent.add(MessageContent.text(text));
               }
             } else if (blockType == 'tool_use') {
+              // When we see a tool_use, convert any preceding text to thinking
+              // (text before tools is "thinking out loud", not final response)
+              for (int i = 0; i < pendingAssistantContent.length; i++) {
+                if (pendingAssistantContent[i].type == ContentType.text) {
+                  final thinkingText = pendingAssistantContent[i].text ?? '';
+                  if (thinkingText.isNotEmpty) {
+                    pendingAssistantContent[i] = MessageContent.thinking(thinkingText);
+                  }
+                }
+              }
               pendingAssistantContent.add(MessageContent.toolUse(ToolCall(
                 id: block['id'] as String? ?? '',
                 name: block['name'] as String? ?? '',
@@ -140,14 +149,6 @@ class SessionTranscript {
         content: pendingAssistantContent,
         timestamp: assistantTimestamp ?? DateTime.now(),
       ));
-    }
-
-    // Debug output
-    debugPrint('[SessionTranscript] Parsed ${events.length} events into ${messages.length} messages');
-    for (int i = 0; i < messages.length; i++) {
-      final msg = messages[i];
-      final contentTypes = msg.content.map((c) => c.type.name).toList();
-      debugPrint('[SessionTranscript] Message $i: ${msg.role.name} with ${msg.content.length} blocks: $contentTypes');
     }
 
     return messages;

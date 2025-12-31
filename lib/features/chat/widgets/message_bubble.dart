@@ -89,32 +89,32 @@ class MessageBubble extends ConsumerWidget {
   List<Widget> _buildContent(BuildContext context, bool isUser, bool isDark, String? vaultPath) {
     final widgets = <Widget>[];
 
-    // Collect thinking items (thinking text + tool calls) in order
-    final thinkingItems = <MessageContent>[];
-    final textParts = <String>[];
+    // Build content in order, grouping consecutive thinking/tool items together
+    List<MessageContent> pendingThinkingItems = [];
 
-    for (final content in message.content) {
-      if (content.type == ContentType.text && content.text != null) {
-        textParts.add(content.text!);
-      } else if (content.type == ContentType.thinking || content.type == ContentType.toolUse) {
-        // Collect thinking and tool calls together in order
-        thinkingItems.add(content);
+    void flushThinkingItems() {
+      if (pendingThinkingItems.isNotEmpty) {
+        widgets.add(CollapsibleThinkingSection(
+          items: List.from(pendingThinkingItems),
+          isDark: isDark,
+        ));
+        pendingThinkingItems = [];
       }
     }
 
-    // Add combined thinking section (collapsed by default)
-    if (thinkingItems.isNotEmpty) {
-      widgets.add(CollapsibleThinkingSection(
-        items: thinkingItems,
-        isDark: isDark,
-      ));
+    for (final content in message.content) {
+      if (content.type == ContentType.text && content.text != null) {
+        // Flush any pending thinking items before adding text
+        flushThinkingItems();
+        widgets.add(_buildTextContent(context, content.text!, isUser, isDark, vaultPath));
+      } else if (content.type == ContentType.thinking || content.type == ContentType.toolUse) {
+        // Accumulate thinking and tool calls
+        pendingThinkingItems.add(content);
+      }
     }
 
-    // Add final text content last (the actual response)
-    if (textParts.isNotEmpty) {
-      final combinedText = textParts.join('\n');
-      widgets.add(_buildTextContent(context, combinedText, isUser, isDark, vaultPath));
-    }
+    // Flush any remaining thinking items
+    flushThinkingItems();
 
     // Show streaming indicator if message is streaming and has no content yet
     if (message.isStreaming && widgets.isEmpty) {
