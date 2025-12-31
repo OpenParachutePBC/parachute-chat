@@ -100,13 +100,42 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   /// Scroll to bottom instantly (no animation) - for initial load
   void _scrollToBottomInstant() {
-    if (_scrollController.hasClients) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_scrollController.hasClients) {
-          _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+    // Use multiple post-frame callbacks to ensure layout is complete
+    // This handles cases where ListView hasn't attached yet or content is still rendering
+    int attempts = 0;
+    const maxAttempts = 5;
+
+    void tryScroll() {
+      if (!mounted) return;
+      attempts++;
+
+      if (_scrollController.hasClients) {
+        final maxExtent = _scrollController.position.maxScrollExtent;
+        _scrollController.jumpTo(maxExtent);
+
+        // Schedule another check in case content is still loading
+        if (attempts < maxAttempts) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && _scrollController.hasClients) {
+              final newMaxExtent = _scrollController.position.maxScrollExtent;
+              // If max extent changed, scroll again
+              if (newMaxExtent > maxExtent) {
+                _scrollController.jumpTo(newMaxExtent);
+              }
+            }
+          });
         }
-      });
+      } else if (attempts < maxAttempts) {
+        // Retry on next frame if not ready yet
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) tryScroll();
+        });
+      }
     }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) tryScroll();
+    });
   }
 
   void _handleSend(String message) {

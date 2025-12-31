@@ -12,10 +12,14 @@ class CollapsibleThinkingSection extends StatefulWidget {
   final List<MessageContent> items;
   final bool isDark;
 
+  /// Whether the section should start expanded (true during streaming)
+  final bool initiallyExpanded;
+
   const CollapsibleThinkingSection({
     super.key,
     required this.items,
     required this.isDark,
+    this.initiallyExpanded = false,
   });
 
   @override
@@ -24,7 +28,13 @@ class CollapsibleThinkingSection extends StatefulWidget {
 
 class _CollapsibleThinkingSectionState extends State<CollapsibleThinkingSection> {
   final Set<int> _expandedTools = {};
-  bool _sectionExpanded = false;
+  late bool _sectionExpanded;
+
+  @override
+  void initState() {
+    super.initState();
+    _sectionExpanded = widget.initiallyExpanded;
+  }
 
   @override
   Widget build(BuildContext context) {

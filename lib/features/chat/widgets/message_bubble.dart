@@ -97,6 +97,8 @@ class MessageBubble extends ConsumerWidget {
         widgets.add(CollapsibleThinkingSection(
           items: List.from(pendingThinkingItems),
           isDark: isDark,
+          // Expand during streaming so user can see work in progress
+          initiallyExpanded: message.isStreaming,
         ));
         pendingThinkingItems = [];
       }
