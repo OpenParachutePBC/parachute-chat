@@ -66,7 +66,7 @@ class WelcomeStep extends StatelessWidget {
 
             // Tagline
             Text(
-              'Think naturally',
+              'AI conversations with your vault',
               style: TextStyle(
                 fontSize: TypographyTokens.titleLarge,
                 fontStyle: FontStyle.italic,
@@ -81,7 +81,7 @@ class WelcomeStep extends StatelessWidget {
 
             // Subtitle
             Text(
-              'Your privacy-first voice recorder with AI superpowers',
+              'Chat with Claude about your notes, documents, and ideas',
               style: TextStyle(
                 fontSize: TypographyTokens.bodyLarge,
                 color: isDark
@@ -146,9 +146,9 @@ class WelcomeStep extends StatelessWidget {
             _buildFeature(
               context,
               icon: Icons.folder_open,
-              title: 'One Folder, All Your Data',
+              title: 'Your Vault',
               description:
-                  'Standard markdown files - open, portable, and yours',
+                  'Sessions and contexts stored as markdown - portable and yours',
               isDark: isDark,
             ),
 
@@ -156,9 +156,9 @@ class WelcomeStep extends StatelessWidget {
 
             _buildFeature(
               context,
-              icon: Icons.mic,
-              title: 'Voice Recording',
-              description: 'Quick captures with local or Omi device recording',
+              icon: Icons.chat_bubble_outline,
+              title: 'AI Conversations',
+              description: 'Chat with Claude via Parachute Base server',
               isDark: isDark,
             ),
 
@@ -166,9 +166,9 @@ class WelcomeStep extends StatelessWidget {
 
             _buildFeature(
               context,
-              icon: Icons.record_voice_over,
-              title: 'Auto-Transcription',
-              description: 'Local AI models for fast, offline transcription',
+              icon: Icons.history,
+              title: 'Session History',
+              description: 'All conversations saved and searchable',
               isDark: isDark,
             ),
 

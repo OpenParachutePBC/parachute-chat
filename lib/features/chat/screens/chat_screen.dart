@@ -284,11 +284,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     // Determine title text
     String titleText;
     if (sessionId == null) {
-      titleText = 'New Chat';
+      titleText = 'Parachute Chat';
     } else if (sessionTitle != null && sessionTitle.isNotEmpty) {
       titleText = sessionTitle;
     } else {
-      titleText = 'Chat';
+      titleText = 'Parachute Chat';
     }
 
     return GestureDetector(

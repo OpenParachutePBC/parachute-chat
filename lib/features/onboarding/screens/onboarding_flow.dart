@@ -4,12 +4,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:parachute_chat/core/theme/design_tokens.dart';
 
 import 'steps/welcome_step.dart';
-import 'steps/vault_picker_step.dart';
+import 'steps/server_setup_step.dart';
 import 'steps/ready_step.dart';
 
 /// Multi-step onboarding flow for first-time users
 ///
-/// Simplified flow for Chat: Welcome → Vault → Ready
+/// Unified flow for Chat: Welcome → Server Setup → Ready
 class OnboardingFlow extends ConsumerStatefulWidget {
   final VoidCallback onComplete;
 
@@ -38,10 +38,9 @@ class _OnboardingFlowState extends ConsumerState<OnboardingFlow>
   int _currentStep = 0;
   late AnimationController _progressController;
 
-  // Simplified step structure for Chat users
   final List<OnboardingStepData> _steps = [
     OnboardingStepData(title: 'Welcome', icon: Icons.waving_hand),
-    OnboardingStepData(title: 'Vault', icon: Icons.folder_open),
+    OnboardingStepData(title: 'Server', icon: Icons.cloud_outlined),
     OnboardingStepData(title: 'Ready', icon: Icons.rocket_launch),
   ];
 
@@ -110,7 +109,7 @@ class _OnboardingFlowState extends ConsumerState<OnboardingFlow>
                   index: _currentStep,
                   children: [
                     WelcomeStep(onNext: _nextStep, onSkip: _skipToEnd),
-                    VaultPickerStep(
+                    ServerSetupStep(
                       onNext: _nextStep,
                       onBack: _previousStep,
                       onSkip: _skipToEnd,

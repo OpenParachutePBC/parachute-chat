@@ -206,87 +206,22 @@ class _AiChatSectionState extends ConsumerState<AiChatSection> {
       children: [
         const SettingsSectionHeader(
           title: 'AI Chat Server',
-          subtitle: 'Enable AI conversations with Claude (requires backend server)',
+          subtitle: 'Configure connection to Parachute Base server',
           icon: Icons.chat_bubble_outline,
         ),
         SizedBox(height: Spacing.lg),
 
-        // AI Chat Toggle with expanded content
+        // AI Chat Server Configuration
         Container(
           padding: EdgeInsets.all(Spacing.lg),
           decoration: BoxDecoration(
-            color: _aiChatEnabled
-                ? BrandColors.forest.withValues(alpha: 0.1)
-                : (isDark
-                      ? BrandColors.nightSurfaceElevated
-                      : BrandColors.stone.withValues(alpha: 0.5)),
+            color: isDark
+                ? BrandColors.nightSurfaceElevated
+                : BrandColors.stone.withValues(alpha: 0.3),
             borderRadius: BorderRadius.circular(Radii.md),
-            border: Border.all(
-              color: _aiChatEnabled
-                  ? BrandColors.forest
-                  : (isDark
-                        ? BrandColors.nightTextSecondary
-                        : BrandColors.driftwood)
-                      .withValues(alpha: 0.3),
-              width: _aiChatEnabled ? 2 : 1,
-            ),
           ),
           child: Column(
             children: [
-              Row(
-                children: [
-                  Icon(
-                    Icons.chat_bubble,
-                    color: _aiChatEnabled
-                        ? BrandColors.forest
-                        : (isDark
-                              ? BrandColors.nightTextSecondary
-                              : BrandColors.driftwood),
-                    size: 32,
-                  ),
-                  SizedBox(width: Spacing.md),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Enable AI Chat',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: TypographyTokens.bodyLarge,
-                            color: isDark
-                                ? BrandColors.nightText
-                                : BrandColors.charcoal,
-                          ),
-                        ),
-                        SizedBox(height: Spacing.xs),
-                        Text(
-                          _aiChatEnabled
-                              ? 'AI Chat tab is visible'
-                              : 'Enable to show AI Chat tab',
-                          style: TextStyle(
-                            fontSize: TypographyTokens.bodySmall,
-                            color: isDark
-                                ? BrandColors.nightTextSecondary
-                                : BrandColors.driftwood,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Switch(
-                    value: _aiChatEnabled,
-                    onChanged: _setAiChatEnabled,
-                    activeTrackColor: BrandColors.forest,
-                  ),
-                ],
-              ),
-
-              // Server URL input (shown when enabled)
-              if (_aiChatEnabled) ...[
-                SizedBox(height: Spacing.lg),
-                const Divider(),
-                SizedBox(height: Spacing.lg),
                 TextField(
                   controller: _aiServerUrlController,
                   decoration: InputDecoration(
@@ -332,7 +267,6 @@ class _AiChatSectionState extends ConsumerState<AiChatSection> {
                 ),
                 SizedBox(height: Spacing.lg),
                 _buildServerStatusIndicator(),
-              ],
             ],
           ),
         ),
