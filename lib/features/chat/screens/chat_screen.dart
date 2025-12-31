@@ -3,9 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute_chat/core/theme/design_tokens.dart';
 import 'package:parachute_chat/core/widgets/error_boundary.dart';
 import 'package:parachute_chat/core/services/logger_service.dart';
-import 'package:parachute_chat/features/context/providers/context_providers.dart';
-import 'package:parachute_chat/features/context/widgets/prompt_chip.dart';
-import 'package:parachute_chat/features/context/widgets/reflection_banner.dart';
 import '../models/chat_session.dart';
 import '../providers/chat_providers.dart';
 import '../widgets/message_bubble.dart';
@@ -53,10 +50,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   final ScrollController _scrollController = ScrollController();
   String? _pendingInitialContext;
   bool _hasAutoRun = false;
-  bool _showReflectionBanner = false;
-  bool _reflectionBannerDismissed = false;
   bool _resumeBannerDismissed = false;
-  int _lastMessageCount = 0;
 
   @override
   void initState() {
@@ -105,26 +99,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     _pendingInitialContext = null;
 
     _scrollToBottom();
-  }
-
-  void _handleReflect() {
-    // Hide the banner
-    setState(() {
-      _showReflectionBanner = false;
-      _reflectionBannerDismissed = true;
-    });
-
-    // Send the reflection prompt
-    const reflectPrompt = '''Based on the conversation we just had, do you have any suggestions for how we might update my AGENTS.md?
-
-Consider:
-- Did I reveal anything about who I am or how I think?
-- Did new topics or interests come up?
-- Should any links be added to point to relevant context?
-
-If you have suggestions, show me the specific edits you'd recommend.''';
-
-    _handleSend(reflectPrompt);
   }
 
   void _showSessionRecoveryDialog(SessionUnavailableInfo info) {
@@ -185,7 +159,7 @@ If you have suggestions, show me the specific edits you'd recommend.''';
     final chatState = ref.watch(chatMessagesProvider);
     final currentSessionId = ref.watch(currentSessionIdProvider);
 
-    // Auto-scroll when new messages arrive and show reflection banner
+    // Auto-scroll when new messages arrive
     ref.listen(chatMessagesProvider, (previous, next) {
       if (next.messages.length != (previous?.messages.length ?? 0)) {
         _scrollToBottom();
@@ -194,19 +168,6 @@ If you have suggestions, show me the specific edits you'd recommend.''';
       // Reset resume banner when session changes
       if (previous?.sessionId != next.sessionId) {
         _resumeBannerDismissed = false;
-      }
-
-      // Show reflection banner when streaming ends and we have enough exchanges
-      final wasStreaming = previous?.isStreaming ?? false;
-      final isNowStreaming = next.isStreaming;
-      if (wasStreaming && !isNowStreaming && !_reflectionBannerDismissed) {
-        // Check if we have at least 2 message pairs (4 messages)
-        if (next.messages.length >= 4 && next.messages.length > _lastMessageCount) {
-          setState(() {
-            _showReflectionBanner = true;
-            _lastMessageCount = next.messages.length;
-          });
-        }
       }
 
       // Show session recovery dialog when session is unavailable
@@ -298,18 +259,6 @@ If you have suggestions, show me the specific edits you'd recommend.''';
           // Continue button for imported sessions
           if (chatState.isViewingImported)
             _buildContinueButton(context, isDark, chatState),
-
-          // Reflection suggestion banner
-          if (_showReflectionBanner && !chatState.isStreaming)
-            ReflectionBanner(
-              onReflect: () => _handleReflect(),
-              onDismiss: () {
-                setState(() {
-                  _showReflectionBanner = false;
-                  _reflectionBannerDismissed = true;
-                });
-              },
-            ),
 
           // Input field - disabled when viewing imported sessions (use Continue button)
           ChatInput(
@@ -429,8 +378,6 @@ If you have suggestions, show me the specific edits you'd recommend.''';
   }
 
   Widget _buildEmptyState(BuildContext context, bool isDark) {
-    final promptsAsync = ref.watch(promptsProvider);
-
     return SingleChildScrollView(
       child: Center(
         child: Padding(
@@ -474,43 +421,21 @@ If you have suggestions, show me the specific edits you'd recommend.''';
               ),
             ),
             const SizedBox(height: Spacing.xl),
-            // Quick action prompts from prompts.yaml
-            promptsAsync.when(
-              data: (prompts) => Wrap(
-                spacing: Spacing.sm,
-                runSpacing: Spacing.sm,
-                alignment: WrapAlignment.center,
-                children: prompts.take(4).map((prompt) => PromptChip(
-                  prompt: prompt,
-                  onTap: () => _handleSend(prompt.prompt),
-                )).toList(),
-              ),
-              loading: () => Wrap(
-                spacing: Spacing.sm,
-                runSpacing: Spacing.sm,
-                alignment: WrapAlignment.center,
-                children: [
-                  _SuggestionChip(
-                    label: 'Loading prompts...',
-                    onTap: () {},
-                  ),
-                ],
-              ),
-              error: (e, st) => Wrap(
-                spacing: Spacing.sm,
-                runSpacing: Spacing.sm,
-                alignment: WrapAlignment.center,
-                children: [
-                  _SuggestionChip(
-                    label: 'Summarize my recent notes',
-                    onTap: () => _handleSend('Summarize my recent notes'),
-                  ),
-                  _SuggestionChip(
-                    label: 'What did I capture today?',
-                    onTap: () => _handleSend('What did I capture today?'),
-                  ),
-                ],
-              ),
+            // Quick suggestion chips
+            Wrap(
+              spacing: Spacing.sm,
+              runSpacing: Spacing.sm,
+              alignment: WrapAlignment.center,
+              children: [
+                _SuggestionChip(
+                  label: 'Summarize my recent notes',
+                  onTap: () => _handleSend('Summarize my recent notes'),
+                ),
+                _SuggestionChip(
+                  label: 'What did I capture today?',
+                  onTap: () => _handleSend('What did I capture today?'),
+                ),
+              ],
             ),
           ],
         ),

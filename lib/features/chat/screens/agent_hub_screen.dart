@@ -1,9 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute_chat/core/theme/design_tokens.dart';
-import 'package:parachute_chat/features/context/providers/context_providers.dart';
-import 'package:parachute_chat/features/context/widgets/prompts_bottom_sheet.dart';
-import 'package:parachute_chat/features/context/widgets/prompt_chip.dart';
 import 'package:parachute_chat/features/settings/screens/settings_screen.dart';
 import '../models/chat_session.dart';
 import '../providers/chat_providers.dart';
@@ -59,15 +56,6 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
               color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
             ),
             tooltip: 'Refresh',
-          ),
-          // Quick prompts button
-          IconButton(
-            onPressed: () => _showPromptsSheet(context),
-            icon: Icon(
-              Icons.bolt_outlined,
-              color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
-            ),
-            tooltip: 'Quick Actions',
           ),
           // New chat button
           IconButton(
@@ -376,8 +364,6 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
   }
 
   Widget _buildEmptyState(BuildContext context, bool isDark) {
-    final promptsAsync = ref.watch(promptsProvider);
-
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(Spacing.xl),
@@ -419,19 +405,23 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
             ),
             const SizedBox(height: Spacing.xxl),
 
-            // Quick prompts
-            promptsAsync.when(
-              data: (prompts) => Wrap(
-                spacing: Spacing.sm,
-                runSpacing: Spacing.sm,
-                alignment: WrapAlignment.center,
-                children: prompts.take(3).map((prompt) => PromptChip(
-                      prompt: prompt,
-                      onTap: () => _startNewChatWithPrompt(context, prompt.prompt),
-                    )).toList(),
-              ),
-              loading: () => const SizedBox.shrink(),
-              error: (e, st) => const SizedBox.shrink(),
+            // Quick suggestions
+            Wrap(
+              spacing: Spacing.sm,
+              runSpacing: Spacing.sm,
+              alignment: WrapAlignment.center,
+              children: [
+                _QuickSuggestionChip(
+                  label: 'Summarize my recent notes',
+                  isDark: isDark,
+                  onTap: () => _startNewChatWithPrompt(context, 'Summarize my recent notes'),
+                ),
+                _QuickSuggestionChip(
+                  label: 'What did I capture today?',
+                  isDark: isDark,
+                  onTap: () => _startNewChatWithPrompt(context, 'What did I capture today?'),
+                ),
+              ],
             ),
           ],
         ),
@@ -548,13 +538,6 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
   // Actions
   // ============================================================
 
-  void _showPromptsSheet(BuildContext context) {
-    PromptsBottomSheet.show(
-      context,
-      onPromptSelected: (prompt) => _startNewChatWithPrompt(context, prompt),
-    );
-  }
-
   void _startNewChat(BuildContext context) {
     ref.read(newChatProvider)();
 
@@ -661,4 +644,37 @@ class _SessionGroup {
     required this.label,
     required this.sessions,
   });
+}
+
+class _QuickSuggestionChip extends StatelessWidget {
+  final String label;
+  final bool isDark;
+  final VoidCallback onTap;
+
+  const _QuickSuggestionChip({
+    required this.label,
+    required this.isDark,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ActionChip(
+      label: Text(label),
+      onPressed: onTap,
+      backgroundColor: isDark
+          ? BrandColors.nightSurfaceElevated
+          : BrandColors.stone.withValues(alpha: 0.5),
+      labelStyle: TextStyle(
+        fontSize: TypographyTokens.labelMedium,
+        color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+      ),
+      shape: RoundedRectangleBorder(
+        borderRadius: Radii.badge,
+        side: BorderSide(
+          color: isDark ? BrandColors.nightSurfaceElevated : BrandColors.stone,
+        ),
+      ),
+    );
+  }
 }

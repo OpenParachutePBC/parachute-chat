@@ -1,6 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute_chat/core/providers/file_system_provider.dart';
-import '../models/quick_prompt.dart';
 import '../services/vault_context_service.dart';
 
 // ============================================================
@@ -39,12 +38,6 @@ final agentsMdProvider = FutureProvider<String?>((ref) async {
   return service.loadAgentsMd();
 });
 
-/// Load prompts from prompts.yaml
-final promptsProvider = FutureProvider<List<QuickPrompt>>((ref) async {
-  final service = ref.watch(vaultContextServiceProvider);
-  return service.loadPrompts();
-});
-
 // ============================================================
 // Actions
 // ============================================================
@@ -57,7 +50,6 @@ final initializeVaultContextProvider = Provider<Future<void> Function()>((ref) {
     // Invalidate status and content providers to refresh
     ref.invalidate(vaultContextStatusProvider);
     ref.invalidate(agentsMdProvider);
-    ref.invalidate(promptsProvider);
   };
 });
 
@@ -69,7 +61,6 @@ final initializeVaultWithMemoriesProvider = Provider<Future<void> Function(Strin
     // Invalidate status and content providers to refresh
     ref.invalidate(vaultContextStatusProvider);
     ref.invalidate(agentsMdProvider);
-    ref.invalidate(promptsProvider);
   };
 });
 
@@ -80,18 +71,6 @@ final saveAgentsMdProvider = Provider<Future<bool> Function(String)>((ref) {
     final success = await service.saveAgentsMd(content);
     if (success) {
       ref.invalidate(agentsMdProvider);
-    }
-    return success;
-  };
-});
-
-/// Save updated prompts
-final savePromptsProvider = Provider<Future<bool> Function(List<QuickPrompt>)>((ref) {
-  final service = ref.watch(vaultContextServiceProvider);
-  return (List<QuickPrompt> prompts) async {
-    final success = await service.savePrompts(prompts);
-    if (success) {
-      ref.invalidate(promptsProvider);
     }
     return success;
   };

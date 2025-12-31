@@ -120,7 +120,7 @@ class _ImportStepState extends ConsumerState<ImportStep> {
     try {
       final needsSetup = await ref.read(vaultNeedsSetupProvider.future);
       if (needsSetup) {
-        // Create default AGENTS.md and prompts.yaml
+        // Create default AGENTS.md
         await ref.read(initializeVaultContextProvider)();
       }
     } catch (e) {
