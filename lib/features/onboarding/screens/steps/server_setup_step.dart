@@ -22,7 +22,7 @@ class ServerSetupStep extends ConsumerStatefulWidget {
 }
 
 class _ServerSetupStepState extends ConsumerState<ServerSetupStep> {
-  late TextEditingController _urlController;
+  final TextEditingController _urlController = TextEditingController();
   bool _isLoading = false;
   bool _isTested = false;
   String? _errorMessage;
@@ -35,7 +35,11 @@ class _ServerSetupStepState extends ConsumerState<ServerSetupStep> {
 
   Future<void> _loadCurrentUrl() async {
     final url = await ref.read(aiServerUrlProvider.future);
-    _urlController = TextEditingController(text: url);
+    if (mounted) {
+      setState(() {
+        _urlController.text = url;
+      });
+    }
   }
 
   @override

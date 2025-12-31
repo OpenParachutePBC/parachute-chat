@@ -5,6 +5,7 @@ import '../models/chat_session.dart';
 import '../models/chat_message.dart';
 import '../models/stream_event.dart';
 import '../models/session_resume_info.dart';
+import '../models/vault_entry.dart';
 import '../services/chat_service.dart';
 import '../services/local_session_reader.dart';
 import '../services/chat_import_service.dart';
@@ -115,6 +116,11 @@ class ChatMessagesState {
   final String? sessionId;
   final String? sessionTitle;
 
+  /// Working directory for this session (relative to vault)
+  /// If set, the agent operates in this directory and loads its CLAUDE.md
+  /// Default is 'Chat' for the standard thinking-oriented experience
+  final String? workingDirectory;
+
   /// If this is a continuation, the original session being continued
   final ChatSession? continuedFromSession;
 
@@ -138,6 +144,7 @@ class ChatMessagesState {
     this.error,
     this.sessionId,
     this.sessionTitle,
+    this.workingDirectory,
     this.continuedFromSession,
     this.priorMessages = const [],
     this.viewingSession,
@@ -157,12 +164,14 @@ class ChatMessagesState {
     String? error,
     String? sessionId,
     String? sessionTitle,
+    String? workingDirectory,
     ChatSession? continuedFromSession,
     List<ChatMessage>? priorMessages,
     ChatSession? viewingSession,
     SessionResumeInfo? sessionResumeInfo,
     SessionUnavailableInfo? sessionUnavailable,
     bool clearSessionUnavailable = false,
+    bool clearWorkingDirectory = false,
   }) {
     return ChatMessagesState(
       messages: messages ?? this.messages,
@@ -170,6 +179,7 @@ class ChatMessagesState {
       error: error,
       sessionId: sessionId ?? this.sessionId,
       sessionTitle: sessionTitle ?? this.sessionTitle,
+      workingDirectory: clearWorkingDirectory ? null : (workingDirectory ?? this.workingDirectory),
       continuedFromSession: continuedFromSession ?? this.continuedFromSession,
       priorMessages: priorMessages ?? this.priorMessages,
       viewingSession: viewingSession ?? this.viewingSession,
@@ -285,6 +295,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         messages: loadedMessages,
         sessionId: sessionId,
         sessionTitle: loadedSession.title,
+        workingDirectory: loadedSession.workingDirectory,
         viewingSession: loadedSession.isImported ? loadedSession : null,
         priorMessages: priorMessages,
         continuedFromSession: continuedFromSession,
@@ -300,9 +311,25 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
   /// Clear current session (for new chat)
   ///
   /// Also cancels any active stream by invalidating the stream session ID.
-  void clearSession() {
+  /// Preserves workingDirectory if [preserveWorkingDirectory] is true.
+  void clearSession({bool preserveWorkingDirectory = false}) {
     _activeStreamSessionId = null; // Cancel any active stream
-    state = const ChatMessagesState();
+    if (preserveWorkingDirectory && state.workingDirectory != null) {
+      state = ChatMessagesState(workingDirectory: state.workingDirectory);
+    } else {
+      state = const ChatMessagesState();
+    }
+  }
+
+  /// Set the working directory for new sessions
+  ///
+  /// [path] should be relative to the vault (e.g., "Chat", "Projects/myapp")
+  /// Set to null or 'Chat' for the default thinking-oriented experience.
+  void setWorkingDirectory(String? path) {
+    state = state.copyWith(
+      workingDirectory: path,
+      clearWorkingDirectory: path == null,
+    );
   }
 
   /// Set up a continuation from an existing session
@@ -442,6 +469,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         initialContext: initialContext,
         priorConversation: effectivePriorConversation,
         continuedFrom: continuedFromId,
+        workingDirectory: state.workingDirectory,
       )) {
         // Check if session has changed (user switched chats during stream)
         if (_activeStreamSessionId != sessionId) {
@@ -821,3 +849,27 @@ final continueSessionProvider = Provider<Future<void> Function(ChatSession)>((re
     }
   };
 });
+
+// ============================================================
+// Vault Browsing
+// ============================================================
+
+/// Provider for browsing vault directories
+///
+/// Use with .family to specify the path:
+/// - ref.watch(vaultDirectoryProvider('')) - vault root
+/// - ref.watch(vaultDirectoryProvider('Projects')) - Projects folder
+/// - ref.watch(vaultDirectoryProvider('Projects/myapp')) - specific project
+final vaultDirectoryProvider = FutureProvider.family<List<VaultEntry>, String>((ref, path) async {
+  final service = ref.watch(chatServiceProvider);
+  return service.listDirectory(path: path);
+});
+
+/// Provider for the current working directory path being browsed
+final currentBrowsePathProvider = StateProvider<String>((ref) => '');
+
+/// Provider for the selected working directory for new chats
+///
+/// This is the working directory that will be used when starting a new chat.
+/// null means use the default (Chat/).
+final selectedWorkingDirectoryProvider = StateProvider<String?>((ref) => null);

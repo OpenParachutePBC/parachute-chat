@@ -11,6 +11,7 @@ import '../widgets/session_selector.dart';
 import '../widgets/connection_status_banner.dart';
 import '../widgets/resume_marker.dart';
 import '../widgets/session_resume_banner.dart';
+import '../widgets/directory_picker.dart';
 import '../../settings/screens/settings_screen.dart';
 
 /// Main chat screen for AI conversations
@@ -99,6 +100,23 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     _pendingInitialContext = null;
 
     _scrollToBottom();
+  }
+
+  Future<void> _showDirectoryPicker() async {
+    final chatState = ref.read(chatMessagesProvider);
+    final currentPath = chatState.workingDirectory;
+
+    final selectedPath = await showDirectoryPicker(
+      context,
+      initialPath: currentPath,
+    );
+
+    // null means canceled, any other value (including empty string) is a selection
+    if (selectedPath != null && mounted) {
+      ref.read(chatMessagesProvider.notifier).setWorkingDirectory(
+            selectedPath.isEmpty ? null : selectedPath,
+          );
+    }
   }
 
   void _showSessionRecoveryDialog(SessionUnavailableInfo info) {
@@ -192,14 +210,36 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           surfaceTintColor: Colors.transparent,
           title: _buildTitle(context, isDark, currentSessionId),
           actions: [
-            // New chat button
-            IconButton(
-              onPressed: () => ref.read(newChatProvider)(),
-              icon: const Icon(Icons.add_comment_outlined),
-            tooltip: 'New Chat',
-          ),
-          const SizedBox(width: Spacing.xs),
-        ],
+            // Working directory indicator/picker
+            if (chatState.workingDirectory != null)
+              Tooltip(
+                message: chatState.workingDirectory!,
+                child: TextButton.icon(
+                  // Only allow changing before first message
+                  onPressed: chatState.messages.isEmpty ? _showDirectoryPicker : null,
+                  icon: Icon(
+                    Icons.folder_outlined,
+                    size: 18,
+                    color: isDark ? BrandColors.nightForest : BrandColors.forest,
+                  ),
+                  label: Text(
+                    chatState.workingDirectory!.split('/').last,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: isDark ? BrandColors.nightForest : BrandColors.forest,
+                    ),
+                  ),
+                ),
+              )
+            else if (chatState.messages.isEmpty)
+              // Only show picker button for new chats without a directory set
+              IconButton(
+                onPressed: _showDirectoryPicker,
+                icon: const Icon(Icons.folder_outlined),
+                tooltip: 'Set working directory',
+              ),
+            const SizedBox(width: Spacing.xs),
+          ],
       ),
       body: Column(
         children: [

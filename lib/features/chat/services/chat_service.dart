@@ -6,6 +6,7 @@ import '../models/chat_session.dart';
 import '../models/chat_message.dart';
 import '../models/stream_event.dart';
 import '../models/system_prompt_info.dart';
+import '../models/vault_entry.dart';
 
 /// Service for communicating with the parachute-base backend
 ///
@@ -175,6 +176,41 @@ class ChatService {
   }
 
   // ============================================================
+  // Vault Browsing
+  // ============================================================
+
+  /// List directory contents in the vault
+  ///
+  /// [path] - Relative path within vault (e.g., "", "Projects", "Code/myapp")
+  /// Returns entries with metadata including hasClaudeMd for directories
+  Future<List<VaultEntry>> listDirectory({String path = ''}) async {
+    try {
+      final uri = Uri.parse('$baseUrl/api/ls').replace(
+        queryParameters: path.isNotEmpty ? {'path': path} : null,
+      );
+
+      final response = await _client.get(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+      ).timeout(requestTimeout);
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to list directory: ${response.statusCode}');
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final entries = data['entries'] as List<dynamic>? ?? [];
+
+      return entries
+          .map((e) => VaultEntry.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } catch (e) {
+      debugPrint('[ChatService] Error listing directory: $e');
+      rethrow;
+    }
+  }
+
+  // ============================================================
   // Streaming Chat
   // ============================================================
 
@@ -188,6 +224,9 @@ class ChatService {
   /// that go into the system prompt (not shown in user message)
   ///
   /// [continuedFrom] - ID of the session this continues from (for persistence)
+  ///
+  /// [workingDirectory] - Working directory for this session (relative to vault)
+  /// If provided, the agent operates in this directory and loads its CLAUDE.md
   Stream<StreamEvent> streamChat({
     required String sessionId,
     required String message,
@@ -195,6 +234,7 @@ class ChatService {
     String? initialContext,
     String? priorConversation,
     String? continuedFrom,
+    String? workingDirectory,
   }) async* {
     debugPrint('[ChatService] Starting stream chat');
     debugPrint('[ChatService] Session: $sessionId');
@@ -218,6 +258,7 @@ class ChatService {
       if (initialContext != null) 'initialContext': initialContext,
       if (priorConversation != null) 'priorConversation': priorConversation,
       if (continuedFrom != null) 'continuedFrom': continuedFrom,
+      if (workingDirectory != null) 'workingDirectory': workingDirectory,
     };
     debugPrint('[ChatService] Request body keys: ${requestBody.keys.toList()}');
     request.body = jsonEncode(requestBody);

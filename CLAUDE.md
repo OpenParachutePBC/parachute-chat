@@ -201,7 +201,7 @@ The Chat app uses these vault paths:
 | `Chat/contexts/` | Personal context files |
 | `Chat/assets/` | Generated images, audio |
 | `.agents/` | Custom agent definitions |
-| `AGENTS.md` | System prompt override |
+| `CLAUDE.md` | System prompt override |
 
 Configured in `FileSystemService`:
 ```dart
