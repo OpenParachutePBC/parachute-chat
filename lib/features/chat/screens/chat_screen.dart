@@ -139,9 +139,23 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   void _handleSend(String message) {
+    // Get selected contexts for first message only
+    final chatState = ref.read(chatMessagesProvider);
+    List<String>? contexts;
+
+    // Only include contexts on the first message of a new chat
+    if (chatState.messages.isEmpty && chatState.sessionId == null) {
+      contexts = ref.read(selectedContextsProvider);
+      // Reset contexts after using them
+      ref.read(selectedContextsProvider.notifier).state = [
+        'Chat/contexts/general-context.md'
+      ];
+    }
+
     ref.read(chatMessagesProvider.notifier).sendMessage(
           message: message,
           initialContext: _pendingInitialContext,
+          contexts: contexts,
         );
 
     // Clear pending context after first message

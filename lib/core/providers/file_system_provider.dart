@@ -11,11 +11,18 @@ final fileSystemServiceProvider = Provider<FileSystemService>((ref) {
   return FileSystemService();
 });
 
-/// Provider for the vault root path
+/// Provider for the vault root path (Chat folder)
 final vaultPathProvider = FutureProvider<String>((ref) async {
   final fileSystem = ref.watch(fileSystemServiceProvider);
   await fileSystem.initialize();
   return fileSystem.getRootPath();
+});
+
+/// Provider for the contexts folder path
+final contextsPathProvider = FutureProvider<String>((ref) async {
+  final fileSystem = ref.watch(fileSystemServiceProvider);
+  await fileSystem.initialize();
+  return fileSystem.getContextsPath();
 });
 
 /// Provider for the ExportDetectionService

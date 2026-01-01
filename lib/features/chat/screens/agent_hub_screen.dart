@@ -5,6 +5,7 @@ import 'package:parachute_chat/features/settings/screens/settings_screen.dart';
 import '../models/chat_session.dart';
 import '../providers/chat_providers.dart';
 import '../widgets/session_list_item.dart';
+import '../widgets/new_chat_sheet.dart';
 import 'chat_screen.dart';
 
 /// Filter options for chat sessions
@@ -538,24 +539,67 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
   // Actions
   // ============================================================
 
-  void _startNewChat(BuildContext context) {
-    ref.read(newChatProvider)();
+  Future<void> _startNewChat(BuildContext context) async {
+    // Reset context selection to default before showing sheet
+    ref.read(selectedContextsProvider.notifier).state = [
+      'Chat/contexts/general-context.md'
+    ];
 
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => const ChatScreen(),
-      ),
-    );
+    // Show the new chat sheet
+    final config = await NewChatSheet.show(context);
+
+    // If user cancelled, do nothing
+    if (config == null) return;
+
+    // Clear session and store selected contexts for first message
+    ref.read(newChatProvider)();
+    ref.read(selectedContextsProvider.notifier).state = config.contexts;
+
+    // Set working directory if specified
+    if (config.workingDirectory != null) {
+      ref.read(chatMessagesProvider.notifier).setWorkingDirectory(
+            config.workingDirectory,
+          );
+    }
+
+    if (mounted) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => const ChatScreen(),
+        ),
+      );
+    }
   }
 
-  void _startNewChatWithPrompt(BuildContext context, String prompt) {
-    ref.read(newChatProvider)();
+  Future<void> _startNewChatWithPrompt(BuildContext context, String prompt) async {
+    // Reset context selection to default
+    ref.read(selectedContextsProvider.notifier).state = [
+      'Chat/contexts/general-context.md'
+    ];
 
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => ChatScreen(initialMessage: prompt),
-      ),
-    );
+    // Show the new chat sheet
+    final config = await NewChatSheet.show(context);
+
+    // If user cancelled, do nothing
+    if (config == null) return;
+
+    ref.read(newChatProvider)();
+    ref.read(selectedContextsProvider.notifier).state = config.contexts;
+
+    // Set working directory if specified
+    if (config.workingDirectory != null) {
+      ref.read(chatMessagesProvider.notifier).setWorkingDirectory(
+            config.workingDirectory,
+          );
+    }
+
+    if (mounted) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => ChatScreen(initialMessage: prompt),
+        ),
+      );
+    }
   }
 
   void _handleSessionTap(BuildContext context, ChatSession session) {

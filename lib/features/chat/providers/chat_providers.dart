@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import '../models/chat_session.dart';
 import '../models/chat_message.dart';
+import '../models/context_file.dart';
 import '../models/stream_event.dart';
 import '../models/session_resume_info.dart';
 import '../models/session_transcript.dart';
@@ -412,11 +413,15 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
   ///
   /// [priorConversation] - For continued conversations, prior messages
   /// formatted as text. Goes into system prompt, not shown in chat.
+  ///
+  /// [contexts] - List of context file paths to load (e.g., ['Chat/contexts/general-context.md'])
+  /// Only used on first message of a new chat.
   Future<void> sendMessage({
     required String message,
     String? systemPrompt,
     String? initialContext,
     String? priorConversation,
+    List<String>? contexts,
   }) async {
     if (state.isStreaming) return;
 
@@ -486,6 +491,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         priorConversation: effectivePriorConversation,
         continuedFrom: continuedFromId,
         workingDirectory: state.workingDirectory,
+        contexts: contexts,
       )) {
         // Check if session has changed (user switched chats during stream)
         if (_activeStreamSessionId != sessionId) {
@@ -902,3 +908,29 @@ final currentBrowsePathProvider = StateProvider<String>((ref) => '');
 /// This is the working directory that will be used when starting a new chat.
 /// null means use the default (Chat/).
 final selectedWorkingDirectoryProvider = StateProvider<String?>((ref) => null);
+
+// ============================================================
+// Context Selection
+// ============================================================
+
+/// Provider for available context files
+///
+/// Fetches context files from Chat/contexts/ directory.
+/// Returns empty list if server is unavailable (graceful degradation).
+final availableContextsProvider = FutureProvider<List<ContextFile>>((ref) async {
+  final service = ref.watch(chatServiceProvider);
+  try {
+    return await service.getContexts();
+  } catch (e) {
+    debugPrint('[ChatProviders] Error loading contexts: $e');
+    return []; // Graceful degradation - show no contexts if server unavailable
+  }
+});
+
+/// Provider for selected context file paths for new chats
+///
+/// Default: ['Chat/contexts/general-context.md']
+/// Paths are relative to vault (e.g., "Chat/contexts/work-context.md")
+final selectedContextsProvider = StateProvider<List<String>>((ref) {
+  return ['Chat/contexts/general-context.md'];
+});

@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/chat_session.dart';
 import '../models/chat_message.dart';
+import '../models/context_file.dart';
 import '../models/stream_event.dart';
 import '../models/system_prompt_info.dart';
 import '../models/vault_entry.dart';
@@ -240,6 +241,116 @@ class ChatService {
   }
 
   // ============================================================
+  // Context Files
+  // ============================================================
+
+  /// Get available context files from Chat/contexts/
+  ///
+  /// Uses /api/ls to list files, filters for .md files,
+  /// and converts to ContextFile objects.
+  Future<List<ContextFile>> getContexts() async {
+    try {
+      final entries = await listDirectory(path: 'Chat/contexts');
+
+      final contextFiles = <ContextFile>[];
+      for (final entry in entries) {
+        if (entry.isFile && entry.name.endsWith('.md')) {
+          // Extract title from filename (remove .md, replace dashes with spaces, title case)
+          final filename = entry.name;
+          final titleFromName = filename
+              .replaceAll('.md', '')
+              .replaceAll('-', ' ')
+              .split(' ')
+              .map((w) =>
+                  w.isNotEmpty ? '${w[0].toUpperCase()}${w.substring(1)}' : '')
+              .join(' ');
+
+          contextFiles.add(ContextFile(
+            path: entry.relativePath,
+            filename: filename,
+            title: titleFromName,
+            description: '', // Could enhance to read first line
+            isDefault: filename == 'general-context.md',
+            size: entry.size ?? 0,
+            modified: entry.lastModified ?? DateTime.now(),
+          ));
+        }
+      }
+
+      // Sort: default first, then alphabetically
+      contextFiles.sort((a, b) {
+        if (a.isDefault && !b.isDefault) return -1;
+        if (!a.isDefault && b.isDefault) return 1;
+        return a.title.compareTo(b.title);
+      });
+
+      return contextFiles;
+    } catch (e) {
+      debugPrint('[ChatService] Error getting contexts: $e');
+      rethrow;
+    }
+  }
+
+  // ============================================================
+  // File Operations
+  // ============================================================
+
+  /// Read a file from the vault via the server API
+  ///
+  /// [relativePath] - Path relative to vault root (e.g., 'Chat/contexts/general-context.md')
+  /// Returns file content and metadata, or null if not found
+  Future<VaultFileContent?> readFile(String relativePath) async {
+    try {
+      final uri = Uri.parse('$baseUrl/api/read').replace(
+        queryParameters: {'path': relativePath},
+      );
+
+      final response = await _client.get(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+      ).timeout(requestTimeout);
+
+      if (response.statusCode == 404) {
+        return null;
+      }
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to read file: ${response.statusCode}');
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return VaultFileContent.fromJson(data);
+    } catch (e) {
+      debugPrint('[ChatService] Error reading file $relativePath: $e');
+      rethrow;
+    }
+  }
+
+  /// Write a file to the vault via the server API
+  ///
+  /// [relativePath] - Path relative to vault root (e.g., 'Chat/contexts/my-context.md')
+  /// [content] - The file content to write
+  Future<void> writeFile(String relativePath, String content) async {
+    try {
+      final response = await _client.put(
+        Uri.parse('$baseUrl/api/write'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'path': relativePath,
+          'content': content,
+        }),
+      ).timeout(requestTimeout);
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to write file: ${response.statusCode}');
+      }
+    } catch (e) {
+      debugPrint('[ChatService] Error writing file $relativePath: $e');
+      rethrow;
+    }
+  }
+
+  // ============================================================
   // Streaming Chat
   // ============================================================
 
@@ -256,6 +367,9 @@ class ChatService {
   ///
   /// [workingDirectory] - Working directory for this session (relative to vault)
   /// If provided, the agent operates in this directory and loads its CLAUDE.md
+  ///
+  /// [contexts] - List of context file paths to load (e.g., ['Chat/contexts/general-context.md'])
+  /// If not provided, server uses default context (general-context.md)
   Stream<StreamEvent> streamChat({
     required String sessionId,
     required String message,
@@ -264,6 +378,7 @@ class ChatService {
     String? priorConversation,
     String? continuedFrom,
     String? workingDirectory,
+    List<String>? contexts,
   }) async* {
     debugPrint('[ChatService] Starting stream chat');
     debugPrint('[ChatService] Session: $sessionId');
@@ -288,6 +403,7 @@ class ChatService {
       if (priorConversation != null) 'priorConversation': priorConversation,
       if (continuedFrom != null) 'continuedFrom': continuedFrom,
       if (workingDirectory != null) 'workingDirectory': workingDirectory,
+      if (contexts != null && contexts.isNotEmpty) 'contexts': contexts,
     };
     debugPrint('[ChatService] Request body keys: ${requestBody.keys.toList()}');
     request.body = jsonEncode(requestBody);
@@ -406,6 +522,30 @@ class ChatSessionWithMessages {
     return ChatSessionWithMessages(
       session: session,
       messages: messages,
+    );
+  }
+}
+
+/// Content read from a vault file via API
+class VaultFileContent {
+  final String path;
+  final String content;
+  final int size;
+  final DateTime lastModified;
+
+  const VaultFileContent({
+    required this.path,
+    required this.content,
+    required this.size,
+    required this.lastModified,
+  });
+
+  factory VaultFileContent.fromJson(Map<String, dynamic> json) {
+    return VaultFileContent(
+      path: json['path'] as String,
+      content: json['content'] as String,
+      size: json['size'] as int,
+      lastModified: DateTime.parse(json['lastModified'] as String),
     );
   }
 }
