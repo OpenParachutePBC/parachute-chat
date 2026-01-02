@@ -88,6 +88,14 @@ Future<bool> deleteSkill(WidgetRef ref, String name) async {
   return result;
 }
 
+/// Upload a skill file (.skill or .zip) and refresh the list
+Future<Skill> uploadSkillFile(WidgetRef ref, String filePath, String fileName) async {
+  final service = ref.read(skillsServiceProvider);
+  final result = await service.uploadSkillFile(filePath, fileName);
+  ref.invalidate(skillsProvider);
+  return result;
+}
+
 /// Refresh the skills list
 void refreshSkills(WidgetRef ref) {
   ref.invalidate(skillsProvider);

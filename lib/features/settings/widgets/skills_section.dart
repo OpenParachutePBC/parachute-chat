@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:parachute_chat/core/theme/design_tokens.dart';
 import 'package:parachute_chat/features/skills/models/skill.dart';
 import 'package:parachute_chat/features/skills/providers/skills_providers.dart';
@@ -7,14 +8,20 @@ import './settings_section_header.dart';
 
 /// Agent Skills settings section
 ///
-/// Displays available agent skills and allows creating/deleting them.
-/// Skills are stored in {vault}/.claude/skills/ and are available to all chats.
+/// Skills extend Claude's capabilities with custom instructions, scripts,
+/// reference docs, and assets. They're stored in {vault}/.claude/skills/
+/// and Claude triggers them automatically based on the task.
 ///
-/// Skills can include:
+/// Skill structure:
 /// - SKILL.md: Instructions (required)
 /// - scripts/: Executable Python/Bash scripts
 /// - references/: Documentation loaded on-demand
 /// - assets/: Files for output (templates, images)
+///
+/// This UI focuses on:
+/// 1. Uploading .skill files (ZIP format) from external sources
+/// 2. Viewing and managing existing skills
+/// 3. Guiding users to ask Claude for creating complex skills
 class SkillsSection extends ConsumerStatefulWidget {
   const SkillsSection({super.key});
 
@@ -23,48 +30,31 @@ class SkillsSection extends ConsumerStatefulWidget {
 }
 
 class _SkillsSectionState extends ConsumerState<SkillsSection> {
-  bool _isCreatingSkill = false;
-  final _nameController = TextEditingController();
-  final _descriptionController = TextEditingController();
-  final _contentController = TextEditingController();
-  final _formKey = GlobalKey<FormState>();
+  bool _isUploading = false;
 
-  @override
-  void dispose() {
-    _nameController.dispose();
-    _descriptionController.dispose();
-    _contentController.dispose();
-    super.dispose();
-  }
-
-  void _resetForm() {
-    _nameController.clear();
-    _descriptionController.clear();
-    _contentController.clear();
-    setState(() => _isCreatingSkill = false);
-  }
-
-  Future<void> _createSkill() async {
-    if (!_formKey.currentState!.validate()) return;
-
-    final name = _nameController.text.trim();
-    final description = _descriptionController.text.trim();
-    final content = _contentController.text.trim();
-
+  Future<void> _uploadSkillFile() async {
     try {
-      await createSkill(
-        ref,
-        name: name,
-        description: description.isEmpty ? null : description,
-        content: content.isEmpty ? null : content,
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['skill', 'zip'],
+        dialogTitle: 'Select a .skill or .zip file',
       );
 
-      _resetForm();
+      if (result == null || result.files.isEmpty) return;
+
+      final file = result.files.first;
+      if (file.path == null) {
+        throw Exception('Could not access selected file');
+      }
+
+      setState(() => _isUploading = true);
+
+      await uploadSkillFile(ref, file.path!, file.name);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Skill "$name" created'),
+            content: Text('Skill "${file.name}" uploaded successfully'),
             backgroundColor: BrandColors.success,
           ),
         );
@@ -73,10 +63,14 @@ class _SkillsSectionState extends ConsumerState<SkillsSection> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error creating skill: $e'),
+            content: Text('Error uploading skill: $e'),
             backgroundColor: BrandColors.error,
           ),
         );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isUploading = false);
       }
     }
   }
@@ -365,7 +359,9 @@ class _SkillsSectionState extends ConsumerState<SkillsSection> {
         filename.endsWith('.svg')) {
       return Icons.image;
     }
-    if (filename == 'scripts' || filename == 'references' || filename == 'assets') {
+    if (filename == 'scripts' ||
+        filename == 'references' ||
+        filename == 'assets') {
       return Icons.folder;
     }
     return Icons.insert_drive_file;
@@ -484,162 +480,123 @@ class _SkillsSectionState extends ConsumerState<SkillsSection> {
     );
   }
 
-  Widget _buildCreateSkillForm(bool isDark) {
-    final cardColor = isDark ? BrandColors.nightSurfaceElevated : Colors.white;
-    final borderColor = BrandColors.turquoise.withValues(alpha: 0.5);
-
-    return Form(
-      key: _formKey,
-      child: Container(
-        padding: EdgeInsets.all(Spacing.lg),
-        decoration: BoxDecoration(
-          color: cardColor,
-          borderRadius: BorderRadius.circular(Radii.md),
-          border: Border.all(color: borderColor, width: 2),
-          boxShadow: isDark
-              ? null
-              : [
-                  BoxShadow(
-                    color: BrandColors.turquoise.withValues(alpha: 0.1),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
+  Widget _buildHowToCreateSkills(bool isDark) {
+    return Container(
+      padding: EdgeInsets.all(Spacing.lg),
+      decoration: BoxDecoration(
+        color: isDark
+            ? BrandColors.nightForest.withValues(alpha: 0.2)
+            : BrandColors.forest.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(Radii.md),
+        border: Border.all(
+          color: isDark
+              ? BrandColors.nightForest.withValues(alpha: 0.4)
+              : BrandColors.forest.withValues(alpha: 0.2),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Icon(
-                  Icons.add_circle_outline,
-                  color: BrandColors.turquoise,
-                  size: 20,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.lightbulb_outline,
+                size: 20,
+                color: BrandColors.forest,
+              ),
+              SizedBox(width: Spacing.sm),
+              Text(
+                'Creating Skills',
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: TypographyTokens.bodyMedium,
+                  color: isDark ? BrandColors.nightText : BrandColors.charcoal,
                 ),
-                SizedBox(width: Spacing.sm),
+              ),
+            ],
+          ),
+          SizedBox(height: Spacing.md),
+          Text(
+            'Skills are directories with instructions, scripts, and reference files. '
+            'The best way to create them is to ask Claude in a chat:',
+            style: TextStyle(
+              fontSize: TypographyTokens.bodySmall,
+              color: isDark
+                  ? BrandColors.nightTextSecondary
+                  : BrandColors.driftwood,
+              height: 1.4,
+            ),
+          ),
+          SizedBox(height: Spacing.md),
+          Container(
+            padding: EdgeInsets.all(Spacing.md),
+            decoration: BoxDecoration(
+              color: isDark ? BrandColors.nightSurface : Colors.white,
+              borderRadius: BorderRadius.circular(Radii.sm),
+              border: Border.all(
+                color: isDark
+                    ? BrandColors.nightForest.withValues(alpha: 0.3)
+                    : BrandColors.stone,
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
                 Text(
-                  'Create Skill',
+                  'Example prompts:',
                   style: TextStyle(
+                    fontSize: TypographyTokens.labelSmall,
                     fontWeight: FontWeight.w600,
-                    fontSize: TypographyTokens.bodyLarge,
                     color:
                         isDark ? BrandColors.nightText : BrandColors.charcoal,
                   ),
                 ),
-              ],
-            ),
-            SizedBox(height: Spacing.md),
-
-            // Info box
-            Container(
-              padding: EdgeInsets.all(Spacing.sm),
-              decoration: BoxDecoration(
-                color: isDark
-                    ? BrandColors.nightForest.withValues(alpha: 0.2)
-                    : BrandColors.turquoise.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(Radii.sm),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(
-                    Icons.lightbulb_outline,
-                    size: 16,
-                    color: BrandColors.turquoise,
-                  ),
-                  SizedBox(width: Spacing.sm),
-                  Expanded(
-                    child: Text(
-                      'For complex skills with scripts/files, ask Claude in chat: "Create a skill that..."',
-                      style: TextStyle(
-                        fontSize: TypographyTokens.labelSmall,
-                        color: isDark
-                            ? BrandColors.nightTextSecondary
-                            : BrandColors.driftwood,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            SizedBox(height: Spacing.lg),
-            TextFormField(
-              controller: _nameController,
-              decoration: InputDecoration(
-                labelText: 'Skill Name',
-                hintText: 'e.g., code-reviewer',
-                prefixIcon: const Icon(Icons.label_outline),
-                border: const OutlineInputBorder(),
-                filled: true,
-                fillColor: isDark
-                    ? BrandColors.nightSurface
-                    : BrandColors.cream.withValues(alpha: 0.5),
-                helperText: 'Lowercase with hyphens (e.g., pdf-processor)',
-              ),
-              validator: (value) {
-                if (value == null || value.trim().isEmpty) {
-                  return 'Name is required';
-                }
-                return null;
-              },
-            ),
-            SizedBox(height: Spacing.md),
-            TextFormField(
-              controller: _descriptionController,
-              decoration: InputDecoration(
-                labelText: 'Description',
-                hintText: 'When should Claude use this skill?',
-                prefixIcon: const Icon(Icons.description_outlined),
-                border: const OutlineInputBorder(),
-                filled: true,
-                fillColor: isDark
-                    ? BrandColors.nightSurface
-                    : BrandColors.cream.withValues(alpha: 0.5),
-                helperText: 'Include trigger words (e.g., "review code", "analyze PR")',
-              ),
-            ),
-            SizedBox(height: Spacing.md),
-            TextFormField(
-              controller: _contentController,
-              decoration: InputDecoration(
-                labelText: 'Instructions (SKILL.md body)',
-                hintText: '## How to use this skill\n\n1. First step...',
-                border: const OutlineInputBorder(),
-                filled: true,
-                fillColor: isDark
-                    ? BrandColors.nightSurface
-                    : BrandColors.cream.withValues(alpha: 0.5),
-                alignLabelWithHint: true,
-              ),
-              maxLines: 6,
-            ),
-            SizedBox(height: Spacing.lg),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                TextButton(
-                  onPressed: _resetForm,
-                  child: const Text('Cancel'),
+                SizedBox(height: Spacing.sm),
+                _buildExamplePrompt(
+                  '"Create a skill for reviewing pull requests"',
+                  isDark,
                 ),
-                SizedBox(width: Spacing.md),
-                FilledButton.icon(
-                  onPressed: _createSkill,
-                  icon: const Icon(Icons.add),
-                  label: const Text('Create Skill'),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: BrandColors.turquoise,
-                    padding: EdgeInsets.symmetric(
-                      horizontal: Spacing.lg,
-                      vertical: Spacing.md,
-                    ),
-                  ),
+                SizedBox(height: Spacing.xs),
+                _buildExamplePrompt(
+                  '"Make a skill that generates commit messages"',
+                  isDark,
+                ),
+                SizedBox(height: Spacing.xs),
+                _buildExamplePrompt(
+                  '"Build a skill for writing documentation"',
+                  isDark,
                 ),
               ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
+    );
+  }
+
+  Widget _buildExamplePrompt(String text, bool isDark) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(
+          Icons.format_quote,
+          size: 14,
+          color: BrandColors.turquoise,
+        ),
+        SizedBox(width: Spacing.xs),
+        Expanded(
+          child: Text(
+            text,
+            style: TextStyle(
+              fontSize: TypographyTokens.labelSmall,
+              fontStyle: FontStyle.italic,
+              color: isDark
+                  ? BrandColors.nightTextSecondary
+                  : BrandColors.driftwood,
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -678,7 +635,8 @@ class _SkillsSectionState extends ConsumerState<SkillsSection> {
               SizedBox(width: Spacing.sm),
               Expanded(
                 child: Text(
-                  'Skills can include scripts, reference docs, and assets. Claude triggers them automatically based on your request.',
+                  'Skills can include scripts, reference docs, and assets. '
+                  'Claude triggers them automatically based on your request.',
                   style: TextStyle(
                     fontSize: TypographyTokens.labelSmall,
                     color: isDark
@@ -690,106 +648,166 @@ class _SkillsSectionState extends ConsumerState<SkillsSection> {
             ],
           ),
         ),
-        SizedBox(height: Spacing.md),
+        SizedBox(height: Spacing.lg),
 
-        // Skills list or form
-        if (_isCreatingSkill)
-          _buildCreateSkillForm(isDark)
-        else
-          skillsAsync.when(
-            data: (skills) {
-              if (skills.isEmpty) {
-                return _buildEmptyState(isDark);
-              }
+        // Upload skill button
+        _buildUploadSection(isDark),
+        SizedBox(height: Spacing.lg),
 
-              return Column(
-                children: [
-                  ...skills.map((skill) => _buildSkillCard(skill, isDark)),
-                  SizedBox(height: Spacing.md),
-                  _buildAddButton(isDark),
-                ],
-              );
-            },
-            loading: () => const Center(
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: CircularProgressIndicator(),
-              ),
+        // Skills list
+        skillsAsync.when(
+          data: (skills) {
+            if (skills.isEmpty) {
+              return _buildEmptyState(isDark);
+            }
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Installed Skills',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: TypographyTokens.bodyMedium,
+                    color:
+                        isDark ? BrandColors.nightText : BrandColors.charcoal,
+                  ),
+                ),
+                SizedBox(height: Spacing.md),
+                ...skills.map((skill) => _buildSkillCard(skill, isDark)),
+              ],
+            );
+          },
+          loading: () => const Center(
+            child: Padding(
+              padding: EdgeInsets.all(24),
+              child: CircularProgressIndicator(),
             ),
-            error: (error, stack) => _buildErrorState(error, isDark),
           ),
+          error: (error, stack) => _buildErrorState(error, isDark),
+        ),
+
+        SizedBox(height: Spacing.lg),
+
+        // How to create skills section
+        _buildHowToCreateSkills(isDark),
 
         SizedBox(height: Spacing.lg),
       ],
     );
   }
 
-  Widget _buildEmptyState(bool isDark) {
+  Widget _buildUploadSection(bool isDark) {
     return Container(
-      padding: EdgeInsets.all(Spacing.xl),
+      padding: EdgeInsets.all(Spacing.lg),
       decoration: BoxDecoration(
         color: isDark ? BrandColors.nightSurfaceElevated : Colors.white,
         borderRadius: BorderRadius.circular(Radii.md),
         border: Border.all(
           color: isDark
-              ? BrandColors.turquoise.withValues(alpha: 0.2)
-              : BrandColors.stone,
+              ? BrandColors.turquoise.withValues(alpha: 0.3)
+              : BrandColors.turquoise.withValues(alpha: 0.2),
+          width: 2,
+          strokeAlign: BorderSide.strokeAlignInside,
         ),
       ),
       child: Column(
         children: [
           Icon(
-            Icons.auto_awesome_outlined,
-            size: 48,
-            color: BrandColors.driftwood.withValues(alpha: 0.5),
+            Icons.upload_file,
+            size: 40,
+            color: BrandColors.turquoise,
           ),
           SizedBox(height: Spacing.md),
           Text(
-            'No skills configured',
+            'Upload a Skill',
             style: TextStyle(
-              fontWeight: FontWeight.w500,
+              fontWeight: FontWeight.w600,
+              fontSize: TypographyTokens.bodyLarge,
+              color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+            ),
+          ),
+          SizedBox(height: Spacing.xs),
+          Text(
+            'Import .skill or .zip files from external sources',
+            style: TextStyle(
+              fontSize: TypographyTokens.bodySmall,
               color: isDark
                   ? BrandColors.nightTextSecondary
                   : BrandColors.driftwood,
             ),
-          ),
-          SizedBox(height: Spacing.sm),
-          Text(
-            'Create skills here or ask Claude:\n"Create a skill for reviewing code"',
-            style: TextStyle(
-              fontSize: TypographyTokens.labelSmall,
-              color: isDark
-                  ? BrandColors.nightTextSecondary.withValues(alpha: 0.7)
-                  : BrandColors.driftwood.withValues(alpha: 0.7),
-            ),
             textAlign: TextAlign.center,
           ),
           SizedBox(height: Spacing.lg),
-          FilledButton.icon(
-            onPressed: () => setState(() => _isCreatingSkill = true),
-            icon: const Icon(Icons.add),
-            label: const Text('Create Skill'),
-            style: FilledButton.styleFrom(
-              backgroundColor: BrandColors.turquoise,
-            ),
-          ),
+          _isUploading
+              ? Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor:
+                            AlwaysStoppedAnimation(BrandColors.turquoise),
+                      ),
+                    ),
+                    SizedBox(width: Spacing.md),
+                    Text(
+                      'Uploading...',
+                      style: TextStyle(
+                        color: BrandColors.turquoise,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                )
+              : FilledButton.icon(
+                  onPressed: _uploadSkillFile,
+                  icon: const Icon(Icons.folder_open),
+                  label: const Text('Choose File'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: BrandColors.turquoise,
+                    padding: EdgeInsets.symmetric(
+                      horizontal: Spacing.xl,
+                      vertical: Spacing.md,
+                    ),
+                  ),
+                ),
         ],
       ),
     );
   }
 
-  Widget _buildAddButton(bool isDark) {
-    return SizedBox(
-      width: double.infinity,
-      child: OutlinedButton.icon(
-        onPressed: () => setState(() => _isCreatingSkill = true),
-        icon: const Icon(Icons.add),
-        label: const Text('Create Skill'),
-        style: OutlinedButton.styleFrom(
-          foregroundColor: BrandColors.turquoise,
-          side: BorderSide(color: BrandColors.turquoise),
-          padding: EdgeInsets.symmetric(vertical: Spacing.md),
-        ),
+  Widget _buildEmptyState(bool isDark) {
+    return Container(
+      padding: EdgeInsets.all(Spacing.lg),
+      decoration: BoxDecoration(
+        color: isDark
+            ? BrandColors.nightSurfaceElevated.withValues(alpha: 0.5)
+            : BrandColors.stone.withValues(alpha: 0.3),
+        borderRadius: BorderRadius.circular(Radii.md),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.auto_awesome_outlined,
+            size: 24,
+            color: BrandColors.driftwood.withValues(alpha: 0.5),
+          ),
+          SizedBox(width: Spacing.md),
+          Expanded(
+            child: Text(
+              'No skills installed yet. Upload a skill file or ask Claude to create one.',
+              style: TextStyle(
+                fontSize: TypographyTokens.bodySmall,
+                color: isDark
+                    ? BrandColors.nightTextSecondary
+                    : BrandColors.driftwood,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

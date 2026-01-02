@@ -248,7 +248,15 @@ class MessageBubble extends ConsumerWidget {
 
   /// Build an inline image widget
   Widget _buildImage(Uri uri, String? title, String? alt, String? vaultPath, bool isDark) {
-    final path = _resolveAssetPath(uri.toString(), vaultPath);
+    final uriString = uri.toString();
+
+    // Check if it's a remote URL (http or https)
+    if (uri.scheme == 'http' || uri.scheme == 'https') {
+      return _buildRemoteImage(uriString, alt, isDark);
+    }
+
+    // Handle local file paths
+    final path = _resolveAssetPath(uriString, vaultPath);
 
     if (path == null) {
       return _buildImagePlaceholder(alt ?? 'Image', isDark);
@@ -285,6 +293,53 @@ class MessageBubble extends ConsumerWidget {
           ),
         );
       },
+    );
+  }
+
+  /// Build a remote image widget from URL
+  Widget _buildRemoteImage(String url, String? alt, bool isDark) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: Spacing.sm),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(Radii.sm),
+        child: Image.network(
+          url,
+          fit: BoxFit.contain,
+          loadingBuilder: (context, child, loadingProgress) {
+            if (loadingProgress == null) return child;
+            return Container(
+              padding: const EdgeInsets.all(Spacing.lg),
+              decoration: BoxDecoration(
+                color: isDark ? BrandColors.nightSurface : BrandColors.cream,
+                borderRadius: BorderRadius.circular(Radii.sm),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(
+                    value: loadingProgress.expectedTotalBytes != null
+                        ? loadingProgress.cumulativeBytesLoaded /
+                            loadingProgress.expectedTotalBytes!
+                        : null,
+                    strokeWidth: 2,
+                    color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
+                  ),
+                  const SizedBox(height: Spacing.sm),
+                  Text(
+                    'Loading image...',
+                    style: TextStyle(
+                      fontSize: TypographyTokens.labelSmall,
+                      color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+          errorBuilder: (context, error, stack) =>
+              _buildImagePlaceholder(alt ?? 'Failed to load remote image', isDark),
+        ),
+      ),
     );
   }
 

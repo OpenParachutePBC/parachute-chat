@@ -53,13 +53,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   bool _hasAutoRun = false;
   bool _resumeBannerDismissed = false;
 
-  /// Track message count to detect when messages are loaded
-  int _previousMessageCount = 0;
+  /// Track if user is scrolled away from bottom (to show scroll-to-bottom FAB)
+  bool _showScrollToBottomFab = false;
 
   @override
   void initState() {
     super.initState();
     _pendingInitialContext = widget.initialContext;
+
+    // Listen to scroll position to show/hide scroll-to-bottom FAB
+    _scrollController.addListener(_onScroll);
 
     // Schedule auto-run after first frame
     if (widget.autoRun && widget.autoRunMessage != null) {
@@ -74,6 +77,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     });
   }
 
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+
+    final position = _scrollController.position;
+    // Show FAB if scrolled more than 200 pixels from bottom
+    final isNearBottom = position.maxScrollExtent - position.pixels < 200;
+
+    if (_showScrollToBottomFab == isNearBottom) {
+      setState(() {
+        _showScrollToBottomFab = !isNearBottom;
+      });
+    }
+  }
+
   void _performAutoRun() {
     if (_hasAutoRun) return;
     _hasAutoRun = true;
@@ -82,6 +99,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   @override
   void dispose() {
+    _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     super.dispose();
   }
@@ -276,6 +294,23 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       },
       child: Scaffold(
         backgroundColor: isDark ? BrandColors.nightSurface : BrandColors.cream,
+        floatingActionButton: _showScrollToBottomFab
+            ? Padding(
+                padding: const EdgeInsets.only(bottom: 80), // Above the input field
+                child: FloatingActionButton.small(
+                  onPressed: _scrollToBottom,
+                  backgroundColor: isDark
+                      ? BrandColors.nightSurfaceElevated
+                      : BrandColors.softWhite,
+                  foregroundColor: isDark
+                      ? BrandColors.nightForest
+                      : BrandColors.forest,
+                  elevation: 4,
+                  child: const Icon(Icons.keyboard_arrow_down),
+                ),
+              )
+            : null,
+        floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
         appBar: AppBar(
           backgroundColor: isDark ? BrandColors.nightSurface : BrandColors.softWhite,
           surfaceTintColor: Colors.transparent,

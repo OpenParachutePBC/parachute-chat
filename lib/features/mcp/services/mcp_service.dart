@@ -150,7 +150,129 @@ class McpService {
     }
   }
 
+  /// Test if an MCP server can start successfully
+  ///
+  /// Returns a [McpTestResult] with status and any error details
+  Future<McpTestResult> testServer(String name) async {
+    try {
+      final response = await _client
+          .post(
+            Uri.parse('$baseUrl/api/mcps/$name/test'),
+            headers: {'Content-Type': 'application/json'},
+          )
+          .timeout(const Duration(seconds: 10)); // Longer timeout for test
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+
+      return McpTestResult(
+        name: data['name'] as String? ?? name,
+        status: data['status'] as String? ?? 'unknown',
+        message: data['message'] as String?,
+        error: data['error'] as String?,
+        hint: data['hint'] as String?,
+      );
+    } catch (e) {
+      debugPrint('[McpService] Error testing server $name: $e');
+      return McpTestResult(
+        name: name,
+        status: 'error',
+        error: 'Connection failed: $e',
+      );
+    }
+  }
+
+  /// Get the list of tools provided by an MCP server
+  ///
+  /// Returns [McpToolsResult] with the list of tools or error
+  Future<McpToolsResult> getServerTools(String name) async {
+    try {
+      final response = await _client
+          .get(
+            Uri.parse('$baseUrl/api/mcps/$name/tools'),
+            headers: {'Content-Type': 'application/json'},
+          )
+          .timeout(const Duration(seconds: 15)); // Longer timeout for tools query
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+
+      final toolsList = data['tools'] as List<dynamic>? ?? [];
+      final tools = toolsList
+          .map((t) => McpTool.fromJson(t as Map<String, dynamic>))
+          .toList();
+
+      return McpToolsResult(
+        name: data['name'] as String? ?? name,
+        tools: tools,
+        error: data['error'] as String?,
+      );
+    } catch (e) {
+      debugPrint('[McpService] Error getting tools for $name: $e');
+      return McpToolsResult(
+        name: name,
+        tools: [],
+        error: 'Connection failed: $e',
+      );
+    }
+  }
+
   void dispose() {
     _client.close();
   }
+}
+
+/// A tool provided by an MCP server
+class McpTool {
+  final String name;
+  final String? description;
+  final Map<String, dynamic>? inputSchema;
+
+  const McpTool({
+    required this.name,
+    this.description,
+    this.inputSchema,
+  });
+
+  factory McpTool.fromJson(Map<String, dynamic> json) {
+    return McpTool(
+      name: json['name'] as String,
+      description: json['description'] as String?,
+      inputSchema: json['inputSchema'] as Map<String, dynamic>?,
+    );
+  }
+}
+
+/// Result of getting MCP server tools
+class McpToolsResult {
+  final String name;
+  final List<McpTool> tools;
+  final String? error;
+
+  const McpToolsResult({
+    required this.name,
+    required this.tools,
+    this.error,
+  });
+
+  bool get hasTools => tools.isNotEmpty;
+  bool get hasError => error != null;
+}
+
+/// Result of testing an MCP server
+class McpTestResult {
+  final String name;
+  final String status; // 'ok', 'error', 'unknown'
+  final String? message;
+  final String? error;
+  final String? hint;
+
+  const McpTestResult({
+    required this.name,
+    required this.status,
+    this.message,
+    this.error,
+    this.hint,
+  });
+
+  bool get isOk => status == 'ok';
+  bool get isError => status == 'error';
 }

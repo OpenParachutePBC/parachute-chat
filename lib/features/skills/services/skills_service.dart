@@ -119,6 +119,43 @@ class SkillsService {
     }
   }
 
+  /// Upload a .skill file (ZIP format)
+  ///
+  /// Takes the file path and uploads it to the server as multipart form data.
+  /// The server extracts the ZIP and creates the skill directory.
+  Future<Skill> uploadSkillFile(String filePath, String fileName) async {
+    try {
+      final uri = Uri.parse('$baseUrl/api/skills/upload');
+      final request = http.MultipartRequest('POST', uri);
+
+      request.files.add(
+        await http.MultipartFile.fromPath('file', filePath, filename: fileName),
+      );
+
+      final streamedResponse = await request.send().timeout(
+            const Duration(minutes: 2), // Longer timeout for file uploads
+          );
+
+      final response = await http.Response.fromStream(streamedResponse);
+
+      if (response.statusCode == 409) {
+        final error = jsonDecode(response.body)['error'] ?? 'Skill already exists';
+        throw Exception(error);
+      }
+
+      if (response.statusCode != 200) {
+        final error = jsonDecode(response.body)['error'] ?? 'Unknown error';
+        throw Exception('Failed to upload skill: $error');
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return Skill.fromJson(data['skill'] as Map<String, dynamic>);
+    } catch (e) {
+      debugPrint('[SkillsService] Error uploading skill: $e');
+      rethrow;
+    }
+  }
+
   void dispose() {
     _client.close();
   }
