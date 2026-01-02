@@ -9,7 +9,6 @@ import '../widgets/chat_import_section.dart';
 import '../widgets/privacy_section.dart';
 import '../widgets/developer_section.dart';
 import '../widgets/system_prompt_section.dart';
-import '../widgets/generation_section.dart';
 import '../widgets/mcp_section.dart';
 import '../widgets/skills_section.dart';
 
@@ -17,7 +16,7 @@ import '../widgets/skills_section.dart';
 ///
 /// Organized into logical groups:
 /// - Storage
-/// - Advanced (AI chat, generation, import, privacy)
+/// - Advanced (AI chat, MCP, skills, import, privacy)
 /// - Developer
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -78,7 +77,7 @@ class SettingsScreen extends ConsumerWidget {
 
     return ExpandableSettingsSection(
       title: 'Advanced',
-      subtitle: 'AI chat, generation, and privacy settings',
+      subtitle: 'AI chat, extensions, and privacy settings',
       icon: Icons.tune,
       accentColor: BrandColors.driftwood,
       children: [
@@ -86,7 +85,6 @@ class SettingsScreen extends ConsumerWidget {
         // Only show these sections when AI Chat is enabled
         if (aiChatEnabled) ...[
           const SystemPromptSection(),
-          const GenerationSection(),
           const McpSection(),
           const SkillsSection(),
           const ChatImportSection(),

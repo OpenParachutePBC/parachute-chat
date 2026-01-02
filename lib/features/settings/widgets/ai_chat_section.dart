@@ -15,7 +15,7 @@ class AiChatSection extends ConsumerStatefulWidget {
 
 class _AiChatSectionState extends ConsumerState<AiChatSection> {
   bool _aiChatEnabled = false;
-  String _aiServerUrl = 'http://localhost:8080';
+  String _aiServerUrl = 'http://localhost:3333';
   final TextEditingController _aiServerUrlController = TextEditingController();
   bool _isLoading = true;
 
@@ -226,7 +226,7 @@ class _AiChatSectionState extends ConsumerState<AiChatSection> {
                   controller: _aiServerUrlController,
                   decoration: InputDecoration(
                     labelText: 'Server URL',
-                    hintText: 'http://localhost:8080',
+                    hintText: 'http://localhost:3333',
                     border: const OutlineInputBorder(),
                     prefixIcon: const Icon(Icons.link),
                   ),
