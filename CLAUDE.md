@@ -182,10 +182,14 @@ UI rebuilds via Riverpod watch
 |-------|---------|
 | `session` | Session ID and resume info |
 | `init` | Available tools list |
+| `model` | Model being used (e.g., `claude-opus-4-5-20250514`) |
 | `text` | AI response text (streaming) |
+| `thinking` | Extended thinking content (chain of thought) |
 | `tool_use` | Tool being executed |
 | `tool_result` | Tool execution result |
 | `done` | Final response, session metadata |
+| `aborted` | Stream stopped by user (graceful) |
+| `session_unavailable` | SDK session couldn't be resumed |
 | `error` | Error message |
 
 ---
@@ -196,12 +200,12 @@ The Chat app uses these vault paths:
 
 | Path | Contents |
 |------|----------|
-| `Chat/sessions/` | Chat session markdown files |
-| `Chat/sessions/vault-agent/` | Sessions by agent |
+| `Chat/sessions/` | Chat session markdown files (flat structure) |
 | `Chat/contexts/` | Personal context files |
 | `Chat/assets/` | Generated images, audio |
-| `.agents/` | Custom agent definitions |
 | `CLAUDE.md` | System prompt override |
+
+**Note:** Sessions use lightweight pointer architecture—markdown files contain only frontmatter metadata, with SDK JSONL files at `~/.claude/projects/` as the source of truth for message content.
 
 Configured in `FileSystemService`:
 ```dart
@@ -332,4 +336,4 @@ debugPrint('[ChatService] Response: $event');
 
 ---
 
-**Last Updated:** December 30, 2025
+**Last Updated:** January 2, 2026

@@ -182,6 +182,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     _scrollToBottom();
   }
 
+  void _handleStop() {
+    ref.read(chatMessagesProvider.notifier).abortStream();
+  }
+
   Future<void> _showDirectoryPicker() async {
     final chatState = ref.read(chatMessagesProvider);
     final currentPath = chatState.workingDirectory;
@@ -344,6 +348,29 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 icon: const Icon(Icons.folder_outlined),
                 tooltip: 'Set working directory',
               ),
+            // Model indicator (shows which model is being used)
+            if (chatState.model != null)
+              Tooltip(
+                message: chatState.model!,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: Spacing.sm,
+                    vertical: Spacing.xxs,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _getModelColor(chatState.model!).withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    _getModelBadge(chatState.model!),
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: _getModelColor(chatState.model!),
+                    ),
+                  ),
+                ),
+              ),
             const SizedBox(width: Spacing.xs),
           ],
       ),
@@ -375,27 +402,29 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
           // Messages list
           Expanded(
-            child: chatState.messages.isEmpty
-                ? _buildEmptyStateOrContinuation(context, isDark, chatState)
-                : ListView.builder(
-                    controller: _scrollController,
-                    padding: const EdgeInsets.all(Spacing.md),
-                    itemCount: chatState.messages.length + (chatState.isContinuation ? 1 : 0),
-                    itemBuilder: (context, index) {
-                      // Show resume marker at the top if this is a continuation
-                      if (chatState.isContinuation && index == 0) {
-                        return ResumeMarker(
-                          key: const ValueKey('resume_marker'),
-                          originalSession: chatState.continuedFromSession!,
-                          priorMessages: chatState.priorMessages,
-                        );
-                      }
-                      final msgIndex = chatState.isContinuation ? index - 1 : index;
-                      return MessageBubble(
-                        message: chatState.messages[msgIndex],
-                      );
-                    },
-                  ),
+            child: chatState.isLoading
+                ? _buildLoadingState(isDark)
+                : chatState.messages.isEmpty
+                    ? _buildEmptyStateOrContinuation(context, isDark, chatState)
+                    : ListView.builder(
+                        controller: _scrollController,
+                        padding: const EdgeInsets.all(Spacing.md),
+                        itemCount: chatState.messages.length + (chatState.isContinuation ? 1 : 0),
+                        itemBuilder: (context, index) {
+                          // Show resume marker at the top if this is a continuation
+                          if (chatState.isContinuation && index == 0) {
+                            return ResumeMarker(
+                              key: const ValueKey('resume_marker'),
+                              originalSession: chatState.continuedFromSession!,
+                              priorMessages: chatState.priorMessages,
+                            );
+                          }
+                          final msgIndex = chatState.isContinuation ? index - 1 : index;
+                          return MessageBubble(
+                            message: chatState.messages[msgIndex],
+                          );
+                        },
+                      ),
           ),
 
           // Error banner
@@ -409,7 +438,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           // Input field - disabled when viewing imported sessions (use Continue button)
           ChatInput(
             onSend: _handleSend,
+            onStop: _handleStop,
             enabled: !chatState.isStreaming && !chatState.isViewingImported,
+            isStreaming: chatState.isStreaming,
             initialText: widget.initialMessage,
             hintText: _pendingInitialContext != null
                 ? 'Ask about this recording...'
@@ -464,6 +495,29 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             Icons.arrow_drop_down,
             size: 20,
             color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Build loading state shown during session switch
+  Widget _buildLoadingState(bool isDark) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          CircularProgressIndicator(
+            strokeWidth: 2,
+            color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
+          ),
+          const SizedBox(height: Spacing.md),
+          Text(
+            'Loading session...',
+            style: TextStyle(
+              fontSize: TypographyTokens.bodyMedium,
+              color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+            ),
           ),
         ],
       ),
@@ -734,6 +788,50 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         ],
       ),
     );
+  }
+
+  /// Get a short badge label from a model name
+  /// e.g., "claude-opus-4-5-20250514" -> "Opus 4.5"
+  String _getModelBadge(String model) {
+    final lower = model.toLowerCase();
+    if (lower.contains('opus')) {
+      if (lower.contains('4-5') || lower.contains('4.5')) {
+        return 'Opus 4.5';
+      }
+      return 'Opus';
+    } else if (lower.contains('sonnet')) {
+      if (lower.contains('4')) {
+        return 'Sonnet 4';
+      }
+      return 'Sonnet';
+    } else if (lower.contains('haiku')) {
+      if (lower.contains('3-5') || lower.contains('3.5')) {
+        return 'Haiku 3.5';
+      }
+      return 'Haiku';
+    }
+    // Fallback: try to extract something meaningful
+    if (model.length > 15) {
+      // Extract first meaningful part
+      final parts = model.split('-');
+      if (parts.length > 1) {
+        return parts[1].substring(0, 1).toUpperCase() + parts[1].substring(1);
+      }
+    }
+    return model;
+  }
+
+  /// Get the color associated with a model
+  Color _getModelColor(String model) {
+    final lower = model.toLowerCase();
+    if (lower.contains('opus')) {
+      return const Color(0xFF9333EA); // Purple for Opus
+    } else if (lower.contains('sonnet')) {
+      return const Color(0xFF3B82F6); // Blue for Sonnet
+    } else if (lower.contains('haiku')) {
+      return const Color(0xFF14B8A6); // Teal for Haiku
+    }
+    return BrandColors.forest; // Default
   }
 
   Future<void> _showContinueConfirmation(

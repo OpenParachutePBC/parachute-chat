@@ -5,14 +5,18 @@ import 'package:parachute_chat/core/theme/design_tokens.dart';
 /// Text input field for chat messages
 class ChatInput extends StatefulWidget {
   final Function(String) onSend;
+  final VoidCallback? onStop;
   final bool enabled;
+  final bool isStreaming;
   final String? initialText;
   final String hintText;
 
   const ChatInput({
     super.key,
     required this.onSend,
+    this.onStop,
     this.enabled = true,
+    this.isStreaming = false,
     this.initialText,
     this.hintText = 'Message your vault...',
   });
@@ -138,29 +142,44 @@ class _ChatInputState extends State<ChatInput> {
 
             const SizedBox(width: Spacing.sm),
 
-            // Send button
+            // Send or Stop button
             AnimatedContainer(
               duration: Motion.quick,
               curve: Motion.settling,
-              child: IconButton(
-                onPressed: (_hasText && widget.enabled) ? _handleSend : null,
-                style: IconButton.styleFrom(
-                  backgroundColor: (_hasText && widget.enabled)
-                      ? (isDark ? BrandColors.nightForest : BrandColors.forest)
-                      : (isDark
-                          ? BrandColors.nightSurfaceElevated
-                          : BrandColors.stone),
-                  foregroundColor: (_hasText && widget.enabled)
-                      ? Colors.white
-                      : (isDark
-                          ? BrandColors.nightTextSecondary
-                          : BrandColors.driftwood),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: Radii.button,
-                  ),
-                ),
-                icon: const Icon(Icons.send_rounded, size: 20),
-              ),
+              child: widget.isStreaming
+                  ? IconButton(
+                      onPressed: widget.onStop,
+                      style: IconButton.styleFrom(
+                        backgroundColor: isDark
+                            ? BrandColors.nightForest
+                            : BrandColors.forest,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: Radii.button,
+                        ),
+                      ),
+                      icon: const Icon(Icons.stop_rounded, size: 20),
+                      tooltip: 'Stop generating',
+                    )
+                  : IconButton(
+                      onPressed: (_hasText && widget.enabled) ? _handleSend : null,
+                      style: IconButton.styleFrom(
+                        backgroundColor: (_hasText && widget.enabled)
+                            ? (isDark ? BrandColors.nightForest : BrandColors.forest)
+                            : (isDark
+                                ? BrandColors.nightSurfaceElevated
+                                : BrandColors.stone),
+                        foregroundColor: (_hasText && widget.enabled)
+                            ? Colors.white
+                            : (isDark
+                                ? BrandColors.nightTextSecondary
+                                : BrandColors.driftwood),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: Radii.button,
+                        ),
+                      ),
+                      icon: const Icon(Icons.send_rounded, size: 20),
+                    ),
             ),
           ],
         ),

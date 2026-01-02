@@ -7,7 +7,6 @@ import '../models/chat_message.dart';
 import '../models/context_file.dart';
 import '../models/stream_event.dart';
 import '../models/session_resume_info.dart';
-import '../models/session_transcript.dart';
 import '../models/vault_entry.dart';
 import '../services/chat_service.dart';
 import '../services/local_session_reader.dart';
@@ -142,9 +141,17 @@ class ChatMessagesState {
   /// Contains info for showing recovery dialog to user
   final SessionUnavailableInfo? sessionUnavailable;
 
+  /// Whether the session is currently loading (e.g., during session switch)
+  final bool isLoading;
+
+  /// The model being used for this session (e.g., 'claude-opus-4-5-20250514')
+  /// Set when receiving model event from backend
+  final String? model;
+
   const ChatMessagesState({
     this.messages = const [],
     this.isStreaming = false,
+    this.isLoading = false,
     this.error,
     this.sessionId,
     this.sessionTitle,
@@ -154,6 +161,7 @@ class ChatMessagesState {
     this.viewingSession,
     this.sessionResumeInfo,
     this.sessionUnavailable,
+    this.model,
   });
 
   /// Whether this session is continuing from another
@@ -165,6 +173,7 @@ class ChatMessagesState {
   ChatMessagesState copyWith({
     List<ChatMessage>? messages,
     bool? isStreaming,
+    bool? isLoading,
     String? error,
     String? sessionId,
     String? sessionTitle,
@@ -174,12 +183,14 @@ class ChatMessagesState {
     ChatSession? viewingSession,
     SessionResumeInfo? sessionResumeInfo,
     SessionUnavailableInfo? sessionUnavailable,
+    String? model,
     bool clearSessionUnavailable = false,
     bool clearWorkingDirectory = false,
   }) {
     return ChatMessagesState(
       messages: messages ?? this.messages,
       isStreaming: isStreaming ?? this.isStreaming,
+      isLoading: isLoading ?? this.isLoading,
       error: error,
       sessionId: sessionId ?? this.sessionId,
       sessionTitle: sessionTitle ?? this.sessionTitle,
@@ -187,6 +198,7 @@ class ChatMessagesState {
       continuedFromSession: continuedFromSession ?? this.continuedFromSession,
       priorMessages: priorMessages ?? this.priorMessages,
       viewingSession: viewingSession ?? this.viewingSession,
+      model: model ?? this.model,
       sessionResumeInfo: sessionResumeInfo ?? this.sessionResumeInfo,
       sessionUnavailable: clearSessionUnavailable ? null : (sessionUnavailable ?? this.sessionUnavailable),
     );
@@ -238,6 +250,28 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
   StreamSubscription<StreamEvent>? _currentStreamSubscription;
 
   ChatMessagesNotifier(this._service, this._ref) : super(const ChatMessagesState());
+
+  /// Prepare state for switching to a new session
+  ///
+  /// Clears old messages immediately and shows loading state to prevent
+  /// stale content from being displayed during async session load.
+  void prepareForSessionSwitch(String newSessionId) {
+    // Cancel subscription to current stream
+    _currentStreamSubscription?.cancel();
+    _currentStreamSubscription = null;
+    _activeStreamSessionId = null;
+
+    // Check if the new session has an active background stream
+    final hasActiveStream = _streamManager.hasActiveStream(newSessionId);
+
+    // Clear messages immediately and show loading state
+    state = ChatMessagesState(
+      sessionId: newSessionId,
+      isLoading: true,
+      isStreaming: hasActiveStream,
+      // Clear all other fields to prevent showing stale content
+    );
+  }
 
   /// Load messages for a session
   ///
@@ -331,6 +365,9 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
       // Check if there's an active background stream - set isStreaming if so
       final hasActiveStream = _streamManager.hasActiveStream(sessionId);
 
+      // Preserve the model from current state if we have one (set during streaming)
+      final currentModel = state.model;
+
       state = ChatMessagesState(
         messages: loadedMessages,
         sessionId: sessionId,
@@ -340,6 +377,8 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         priorMessages: priorMessages,
         continuedFromSession: continuedFromSession,
         isStreaming: hasActiveStream,
+        isLoading: false, // Loading complete
+        model: currentModel, // Preserve model from streaming
       );
 
       // If there's an active background stream, reattach to receive updates
@@ -352,7 +391,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
     } catch (e) {
       trace.end(additionalData: {'error': e.toString()});
       _log.error('Error loading session', error: e);
-      state = state.copyWith(error: e.toString());
+      state = state.copyWith(error: e.toString(), isLoading: false);
     }
   }
 
@@ -388,6 +427,13 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         // Reload to get final state
         loadSession(sessionId);
         break;
+      case StreamEventType.aborted:
+        // Stream was stopped by user - session is still valid
+        state = state.copyWith(isStreaming: false);
+        debugPrint('[ChatMessagesNotifier] Stream aborted: ${event.abortedMessage}');
+        // Reload to get current state (conversation continues)
+        loadSession(sessionId);
+        break;
       case StreamEventType.error:
         state = state.copyWith(
           isStreaming: false,
@@ -398,6 +444,32 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         // Other events are handled by the main sendMessage loop
         break;
     }
+  }
+
+  /// Abort the current streaming session
+  ///
+  /// Sends abort signal to the server to stop the agent mid-processing.
+  /// Returns true if abort was successful.
+  Future<bool> abortStream() async {
+    final sessionId = state.sessionId;
+    if (sessionId == null || !state.isStreaming) {
+      debugPrint('[ChatMessagesNotifier] No active stream to abort');
+      return false;
+    }
+
+    debugPrint('[ChatMessagesNotifier] Aborting stream for: $sessionId');
+    final success = await _service.abortStream(sessionId);
+
+    if (success) {
+      // Update state to reflect abort
+      state = state.copyWith(isStreaming: false);
+      // Cancel local subscription
+      _currentStreamSubscription?.cancel();
+      _currentStreamSubscription = null;
+      _activeStreamSessionId = null;
+    }
+
+    return success;
   }
 
   /// Clear current session (for new chat)
@@ -606,6 +678,15 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
             }
             break;
 
+          case StreamEventType.model:
+            // Model info from SDK - capture for display
+            final model = event.model;
+            if (model != null) {
+              debugPrint('[ChatMessagesNotifier] Using model: $model');
+              state = state.copyWith(model: model);
+            }
+            break;
+
           case StreamEventType.text:
             // Accumulating text content from server
             final content = event.textContent;
@@ -743,6 +824,15 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
             );
             debugPrint('[ChatMessagesNotifier] Session unavailable: ${unavailableInfo.reason}');
             return; // Stop processing, wait for user decision
+
+          case StreamEventType.aborted:
+            // Stream was stopped by user - session is still valid for future messages
+            debugPrint('[ChatMessagesNotifier] Stream aborted by user');
+            _updateAssistantMessage(accumulatedContent, isStreaming: false);
+            state = state.copyWith(isStreaming: false);
+            // Reload session to get the final state
+            loadSession(actualSessionId ?? sessionId);
+            return; // Exit the stream loop
 
           case StreamEventType.init:
           case StreamEventType.unknown:
@@ -907,6 +997,9 @@ final newChatProvider = Provider<void Function()>((ref) {
 /// need to check the server.
 final switchSessionProvider = Provider<Future<void> Function(String, {bool isLocal})>((ref) {
   return (String sessionId, {bool isLocal = false}) async {
+    // Immediately clear old messages and show loading state to prevent
+    // showing stale content from previous session during async load
+    ref.read(chatMessagesProvider.notifier).prepareForSessionSwitch(sessionId);
     ref.read(currentSessionIdProvider.notifier).state = sessionId;
     await ref.read(chatMessagesProvider.notifier).loadSession(sessionId, isLocal: isLocal);
   };

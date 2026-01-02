@@ -6,11 +6,13 @@ import 'session_resume_info.dart';
 enum StreamEventType {
   session,
   init,
+  model, // Model being used (emitted when first assistant message received)
   text,
   thinking,
   toolUse,
   toolResult,
   sessionUnavailable, // SDK session couldn't be resumed
+  aborted, // Stream was stopped by user
   done,
   error,
   unknown,
@@ -51,6 +53,9 @@ class StreamEvent {
         case 'init':
           type = StreamEventType.init;
           break;
+        case 'model':
+          type = StreamEventType.model;
+          break;
         case 'text':
           type = StreamEventType.text;
           break;
@@ -65,6 +70,9 @@ class StreamEvent {
           break;
         case 'session_unavailable':
           type = StreamEventType.sessionUnavailable;
+          break;
+        case 'aborted':
+          type = StreamEventType.aborted;
           break;
         case 'done':
           type = StreamEventType.done;
@@ -107,6 +115,9 @@ class StreamEvent {
   /// Get error message from error event
   String? get errorMessage => data['error'] as String?;
 
+  /// Get model name from model or done event
+  String? get model => data['model'] as String?;
+
   /// Get tool use ID from tool_result event (links to original tool_use)
   String? get toolUseId => data['toolUseId'] as String?;
 
@@ -125,6 +136,11 @@ class StreamEvent {
     if (resumeData == null) return null;
     return SessionResumeInfo.fromJson(resumeData);
   }
+
+  // Aborted event accessors
+
+  /// Get message from aborted event
+  String? get abortedMessage => data['message'] as String?;
 
   // Session unavailable event accessors
 

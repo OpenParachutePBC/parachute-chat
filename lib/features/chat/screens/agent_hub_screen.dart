@@ -7,6 +7,7 @@ import '../providers/chat_providers.dart';
 import '../widgets/session_list_item.dart';
 import '../widgets/new_chat_sheet.dart';
 import 'chat_screen.dart';
+import 'claude_code_import_screen.dart';
 
 /// Filter options for chat sessions
 enum ChatFilter {
@@ -57,6 +58,15 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
               color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
             ),
             tooltip: 'Refresh',
+          ),
+          // Continue from Claude Code button
+          IconButton(
+            onPressed: () => _continueFromClaudeCode(context),
+            icon: Icon(
+              Icons.terminal,
+              color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
+            ),
+            tooltip: 'Continue Claude Code Session',
           ),
           // New chat button
           IconButton(
@@ -538,6 +548,25 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
   // ============================================================
   // Actions
   // ============================================================
+
+  Future<void> _continueFromClaudeCode(BuildContext context) async {
+    final sessionId = await Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        builder: (context) => const ClaudeCodeImportScreen(),
+      ),
+    );
+
+    // If a session was selected/adopted, open it
+    if (sessionId != null && mounted) {
+      ref.invalidate(chatSessionsProvider);
+      ref.read(switchSessionProvider)(sessionId);
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => const ChatScreen(),
+        ),
+      );
+    }
+  }
 
   Future<void> _startNewChat(BuildContext context) async {
     // Reset context selection to default before showing sheet

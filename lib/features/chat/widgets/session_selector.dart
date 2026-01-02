@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute_chat/core/theme/design_tokens.dart';
 import '../models/chat_session.dart';
 import '../providers/chat_providers.dart';
+import '../screens/claude_code_import_screen.dart';
 
 /// Bottom sheet for selecting and managing chat sessions
 class SessionSelector extends ConsumerWidget {
@@ -62,6 +63,26 @@ class SessionSelector extends ConsumerWidget {
                   ),
                 ),
                 const Spacer(),
+                // Import from Claude Code button
+                IconButton(
+                  onPressed: () async {
+                    final sessionId = await Navigator.of(context).push<String>(
+                      MaterialPageRoute(
+                        builder: (context) => const ClaudeCodeImportScreen(),
+                      ),
+                    );
+                    if (sessionId != null && context.mounted) {
+                      ref.read(switchSessionProvider)(sessionId);
+                      Navigator.pop(context);
+                    }
+                  },
+                  icon: const Icon(Icons.download, size: 20),
+                  tooltip: 'Import from Claude Code',
+                  style: IconButton.styleFrom(
+                    foregroundColor:
+                        isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
+                  ),
+                ),
                 // New chat button
                 TextButton.icon(
                   onPressed: () {
