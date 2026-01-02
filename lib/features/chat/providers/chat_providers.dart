@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
@@ -11,6 +12,7 @@ import '../models/vault_entry.dart';
 import '../services/chat_service.dart';
 import '../services/local_session_reader.dart';
 import '../services/chat_import_service.dart';
+import '../services/background_stream_manager.dart';
 import 'package:parachute_chat/core/providers/feature_flags_provider.dart';
 import 'package:parachute_chat/core/services/file_system_service.dart';
 import 'package:parachute_chat/core/providers/file_system_provider.dart';
@@ -229,6 +231,12 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
   /// Track pending content updates for batching
   List<MessageContent>? _pendingContent;
 
+  /// Background stream manager for handling streams that survive navigation
+  final BackgroundStreamManager _streamManager = BackgroundStreamManager.instance;
+
+  /// Current stream subscription (for cleanup when navigating away)
+  StreamSubscription<StreamEvent>? _currentStreamSubscription;
+
   ChatMessagesNotifier(this._service, this._ref) : super(const ChatMessagesState());
 
   /// Load messages for a session
@@ -237,9 +245,21 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
   /// then falls back to markdown messages, then local files.
   /// Also cancels any active stream by invalidating the stream session ID.
   /// If the session was continued from another session, loads prior messages too.
+  /// If there's an active background stream for this session, reattaches to it.
   Future<void> loadSession(String sessionId, {bool isLocal = false}) async {
     final trace = perf.trace('LoadSession', metadata: {'sessionId': sessionId, 'isLocal': isLocal});
-    _activeStreamSessionId = null; // Cancel any active stream
+
+    // Cancel subscription to current stream (but let it continue in background)
+    _currentStreamSubscription?.cancel();
+    _currentStreamSubscription = null;
+    _activeStreamSessionId = null;
+
+    // Check if there's an active background stream for this session
+    if (_streamManager.hasActiveStream(sessionId)) {
+      debugPrint('[ChatMessagesNotifier] Reattaching to active background stream for: $sessionId');
+      _activeStreamSessionId = sessionId;
+      // We'll reattach after loading the current state
+    }
 
     try {
       ChatSession? loadedSession;
@@ -308,6 +328,9 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
       // Just use it directly for all API calls
       debugPrint('[ChatMessagesNotifier] Loading session with ID: $sessionId (usedTranscript: $usedTranscript)');
 
+      // Check if there's an active background stream - set isStreaming if so
+      final hasActiveStream = _streamManager.hasActiveStream(sessionId);
+
       state = ChatMessagesState(
         messages: loadedMessages,
         sessionId: sessionId,
@@ -316,8 +339,16 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         viewingSession: loadedSession.isImported ? loadedSession : null,
         priorMessages: priorMessages,
         continuedFromSession: continuedFromSession,
+        isStreaming: hasActiveStream,
       );
-      trace.end(additionalData: {'messageCount': loadedMessages.length, 'usedTranscript': usedTranscript});
+
+      // If there's an active background stream, reattach to receive updates
+      if (hasActiveStream) {
+        debugPrint('[ChatMessagesNotifier] Session has active stream - reattaching');
+        _reattachToBackgroundStream(sessionId);
+      }
+
+      trace.end(additionalData: {'messageCount': loadedMessages.length, 'usedTranscript': usedTranscript, 'hasActiveStream': hasActiveStream});
     } catch (e) {
       trace.end(additionalData: {'error': e.toString()});
       _log.error('Error loading session', error: e);
@@ -325,12 +356,61 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
     }
   }
 
+  /// Reattach to a background stream to continue receiving updates
+  void _reattachToBackgroundStream(String sessionId) {
+    _currentStreamSubscription = _streamManager.reattachCallback(
+      sessionId: sessionId,
+      onEvent: (event) => _handleStreamEvent(event, sessionId),
+      onDone: () {
+        debugPrint('[ChatMessagesNotifier] Background stream done for: $sessionId');
+        if (state.sessionId == sessionId) {
+          state = state.copyWith(isStreaming: false);
+          _ref.invalidate(chatSessionsProvider);
+        }
+      },
+      onError: (error) {
+        debugPrint('[ChatMessagesNotifier] Background stream error for $sessionId: $error');
+        if (state.sessionId == sessionId) {
+          state = state.copyWith(isStreaming: false, error: error.toString());
+        }
+      },
+    );
+  }
+
+  /// Handle a stream event (used by both direct and background streams)
+  void _handleStreamEvent(StreamEvent event, String sessionId) {
+    // Only process if we're still on this session
+    if (state.sessionId != sessionId) return;
+
+    switch (event.type) {
+      case StreamEventType.done:
+        state = state.copyWith(isStreaming: false);
+        // Reload to get final state
+        loadSession(sessionId);
+        break;
+      case StreamEventType.error:
+        state = state.copyWith(
+          isStreaming: false,
+          error: event.errorMessage ?? 'Unknown error',
+        );
+        break;
+      default:
+        // Other events are handled by the main sendMessage loop
+        break;
+    }
+  }
+
   /// Clear current session (for new chat)
   ///
   /// Also cancels any active stream by invalidating the stream session ID.
   /// Preserves workingDirectory if [preserveWorkingDirectory] is true.
+  /// Note: Background streams continue even when session is cleared.
   void clearSession({bool preserveWorkingDirectory = false}) {
-    _activeStreamSessionId = null; // Cancel any active stream
+    // Cancel subscription but let background stream continue
+    _currentStreamSubscription?.cancel();
+    _currentStreamSubscription = null;
+    _activeStreamSessionId = null;
+
     if (preserveWorkingDirectory && state.workingDirectory != null) {
       state = ChatMessagesState(workingDirectory: state.workingDirectory);
     } else {
