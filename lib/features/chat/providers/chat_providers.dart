@@ -8,6 +8,7 @@ import '../models/context_file.dart';
 import '../models/stream_event.dart';
 import '../models/session_resume_info.dart';
 import '../models/vault_entry.dart';
+import '../models/session_transcript.dart';
 import '../services/chat_service.dart';
 import '../services/local_session_reader.dart';
 import '../services/chat_import_service.dart';
@@ -173,6 +174,12 @@ class ChatMessagesState {
   /// Set when receiving model event from backend
   final String? model;
 
+  /// Transcript segments for lazy loading (metadata only for unloaded segments)
+  final List<TranscriptSegment> transcriptSegments;
+
+  /// Total number of transcript segments
+  final int transcriptSegmentCount;
+
   const ChatMessagesState({
     this.messages = const [],
     this.isStreaming = false,
@@ -187,6 +194,8 @@ class ChatMessagesState {
     this.sessionResumeInfo,
     this.sessionUnavailable,
     this.model,
+    this.transcriptSegments = const [],
+    this.transcriptSegmentCount = 0,
   });
 
   /// Whether this session is continuing from another
@@ -194,6 +203,10 @@ class ChatMessagesState {
 
   /// Whether we're viewing an imported session that can be continued
   bool get isViewingImported => viewingSession?.isImported ?? false;
+
+  /// Whether there are earlier segments that haven't been loaded yet
+  bool get hasEarlierSegments => transcriptSegmentCount > 1 &&
+      transcriptSegments.any((s) => !s.loaded && s.index < transcriptSegmentCount - 1);
 
   ChatMessagesState copyWith({
     List<ChatMessage>? messages,
@@ -210,6 +223,8 @@ class ChatMessagesState {
     SessionResumeInfo? sessionResumeInfo,
     SessionUnavailableInfo? sessionUnavailable,
     String? model,
+    List<TranscriptSegment>? transcriptSegments,
+    int? transcriptSegmentCount,
     bool clearSessionUnavailable = false,
     bool clearWorkingDirectory = false,
     bool clearViewingSession = false,
@@ -228,6 +243,8 @@ class ChatMessagesState {
       model: model ?? this.model,
       sessionResumeInfo: sessionResumeInfo ?? this.sessionResumeInfo,
       sessionUnavailable: clearSessionUnavailable ? null : (sessionUnavailable ?? this.sessionUnavailable),
+      transcriptSegments: transcriptSegments ?? this.transcriptSegments,
+      transcriptSegmentCount: transcriptSegmentCount ?? this.transcriptSegmentCount,
     );
   }
 }
@@ -302,6 +319,10 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
     _currentStreamSubscription = null;
     _activeStreamSessionId = null;
 
+    // Cancel any polling timer
+    _pollTimer?.cancel();
+    _pollTimer = null;
+
     // Check if the new session has an active background stream
     final hasActiveStream = _streamManager.hasActiveStream(newSessionId);
 
@@ -329,11 +350,11 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
     _currentStreamSubscription = null;
     _activeStreamSessionId = null;
 
-    // Check if there's an active background stream for this session
-    if (_streamManager.hasActiveStream(sessionId)) {
+    // Check if there's an active background stream for this session (in-memory)
+    bool hasActiveStream = _streamManager.hasActiveStream(sessionId);
+    if (hasActiveStream) {
       debugPrint('[ChatMessagesNotifier] Reattaching to active background stream for: $sessionId');
       _activeStreamSessionId = sessionId;
-      // We'll reattach after loading the current state
     }
 
     try {
@@ -343,13 +364,25 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
 
       debugPrint('[ChatMessagesNotifier] Loading session from server: $sessionId');
 
+      // Also check server for active streams (in case app was restarted/navigated away)
+      // This is done in parallel with loading the session for efficiency
+      final serverStreamCheckFuture = _service.hasActiveStream(sessionId);
+
+      // Track segment metadata for lazy loading UI
+      List<TranscriptSegment> segmentMetadata = [];
+      int segmentCount = 0;
+
       try {
         // First try to get the rich transcript (has tool calls, thinking, etc.)
-        final transcript = await _service.getSessionTranscript(sessionId);
+        // Use afterCompact=true for fast initial load (only recent messages)
+        final transcript = await _service.getSessionTranscript(sessionId, afterCompact: true);
         if (transcript != null && transcript.events.isNotEmpty) {
           loadedMessages = transcript.toMessages();
           usedTranscript = true;
-          debugPrint('[ChatMessagesNotifier] Loaded ${loadedMessages.length} messages from SDK transcript (${transcript.eventCount} events)');
+          segmentMetadata = transcript.segments;
+          segmentCount = transcript.segmentCount;
+          debugPrint('[ChatMessagesNotifier] Loaded ${loadedMessages.length} messages from SDK transcript '
+              '(${transcript.eventCount} events, ${segmentCount} segments, hasEarlier: ${transcript.hasEarlierSegments})');
         }
 
         // Get session metadata (we still need this for title, workingDirectory, etc.)
@@ -364,6 +397,14 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         }
       } catch (e) {
         debugPrint('[ChatMessagesNotifier] Server error loading session: $e');
+      }
+
+      // Wait for server stream check
+      final serverHasActiveStream = await serverStreamCheckFuture;
+      debugPrint('[ChatMessagesNotifier] Server stream check result: $serverHasActiveStream (local: $hasActiveStream)');
+      if (serverHasActiveStream && !hasActiveStream) {
+        debugPrint('[ChatMessagesNotifier] Server reports active stream for: $sessionId (not in local manager)');
+        hasActiveStream = true;
       }
 
       if (loadedSession == null) {
@@ -394,10 +435,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
 
       // SIMPLIFIED: The session id IS the SDK session ID now
       // Just use it directly for all API calls
-      debugPrint('[ChatMessagesNotifier] Loading session with ID: $sessionId (usedTranscript: $usedTranscript)');
-
-      // Check if there's an active background stream - set isStreaming if so
-      final hasActiveStream = _streamManager.hasActiveStream(sessionId);
+      debugPrint('[ChatMessagesNotifier] Loading session with ID: $sessionId (usedTranscript: $usedTranscript, serverActive: $serverHasActiveStream)');
 
       // Preserve the model from current state if we have one (set during streaming)
       final currentModel = state.model;
@@ -413,12 +451,19 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         isStreaming: hasActiveStream,
         isLoading: false, // Loading complete
         model: currentModel, // Preserve model from streaming
+        transcriptSegments: segmentMetadata,
+        transcriptSegmentCount: segmentCount,
       );
 
       // If there's an active background stream, reattach to receive updates
-      if (hasActiveStream) {
-        debugPrint('[ChatMessagesNotifier] Session has active stream - reattaching');
+      if (_streamManager.hasActiveStream(sessionId)) {
+        debugPrint('[ChatMessagesNotifier] Session has active background stream - reattaching');
         _reattachToBackgroundStream(sessionId);
+      } else if (serverHasActiveStream) {
+        // Server has active stream but we don't have a local one
+        // Join the stream to receive real-time updates
+        debugPrint('[ChatMessagesNotifier] Server has active stream - joining');
+        _joinActiveServerStream(sessionId);
       }
 
       trace.end(additionalData: {'messageCount': loadedMessages.length, 'usedTranscript': usedTranscript, 'hasActiveStream': hasActiveStream});
@@ -427,6 +472,71 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
       _log.error('Error loading session', error: e);
       state = state.copyWith(error: e.toString(), isLoading: false);
     }
+  }
+
+  /// Load a specific transcript segment (for loading older history on demand)
+  ///
+  /// [segmentIndex] - The segment to load (0 = oldest, last = most recent)
+  /// The segment's messages will be prepended to the current messages.
+  Future<void> loadSegment(int segmentIndex) async {
+    final sessionId = state.sessionId;
+    if (sessionId == null) return;
+
+    debugPrint('[ChatMessagesNotifier] Loading segment $segmentIndex for session: $sessionId');
+
+    try {
+      final transcript = await _service.getSessionTranscript(
+        sessionId,
+        afterCompact: false,
+        segment: segmentIndex,
+      );
+
+      if (transcript == null || transcript.events.isEmpty) {
+        debugPrint('[ChatMessagesNotifier] No events in segment $segmentIndex');
+        return;
+      }
+
+      final segmentMessages = transcript.toMessages();
+      debugPrint('[ChatMessagesNotifier] Loaded ${segmentMessages.length} messages from segment $segmentIndex');
+
+      // Prepend segment messages to existing messages
+      final updatedMessages = [...segmentMessages, ...state.messages];
+
+      // Update segment metadata to mark this segment as loaded
+      final updatedSegments = state.transcriptSegments.map((s) {
+        if (s.index == segmentIndex) {
+          return TranscriptSegment(
+            index: s.index,
+            isCompacted: s.isCompacted,
+            messageCount: s.messageCount,
+            eventCount: s.eventCount,
+            startTime: s.startTime,
+            endTime: s.endTime,
+            preview: s.preview,
+            loaded: true,
+          );
+        }
+        return s;
+      }).toList();
+
+      state = state.copyWith(
+        messages: updatedMessages,
+        transcriptSegments: updatedSegments,
+      );
+    } catch (e) {
+      debugPrint('[ChatMessagesNotifier] Error loading segment $segmentIndex: $e');
+    }
+  }
+
+  /// Refresh the current session from the server
+  ///
+  /// Useful when streaming reconnection isn't working - user can manually refresh.
+  Future<void> refreshSession() async {
+    final sessionId = state.sessionId;
+    if (sessionId == null) return;
+
+    debugPrint('[ChatMessagesNotifier] Manually refreshing session: $sessionId');
+    await loadSession(sessionId);
   }
 
   /// Reattach to a background stream to continue receiving updates
@@ -448,6 +558,103 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         }
       },
     );
+  }
+
+  Timer? _pollTimer;
+  StreamSubscription? _joinStreamSubscription;
+
+  /// Join an active server stream when we don't have a local stream
+  ///
+  /// This handles the case where the server is still processing but we navigated
+  /// away and lost the local stream connection. Instead of polling, we join the
+  /// active stream to receive events in real-time.
+  void _joinActiveServerStream(String sessionId) {
+    debugPrint('[ChatMessagesNotifier] >>> Joining active server stream for: $sessionId');
+    _joinStreamSubscription?.cancel();
+
+    // Try to join the stream
+    final stream = _service.joinStream(sessionId);
+    if (stream == null) {
+      debugPrint('[ChatMessagesNotifier] Could not join stream for: $sessionId');
+      // Fall back to polling
+      _startPollingForStreamCompletion(sessionId);
+      return;
+    }
+
+    _joinStreamSubscription = stream.listen(
+      (event) {
+        // Only process if we're still on this session
+        if (state.sessionId != sessionId) {
+          debugPrint('[ChatMessagesNotifier] Session changed, cancelling join stream');
+          _joinStreamSubscription?.cancel();
+          return;
+        }
+
+        debugPrint('[ChatMessagesNotifier] Join stream event: ${event.type}');
+        _handleStreamEvent(event, sessionId);
+      },
+      onDone: () {
+        debugPrint('[ChatMessagesNotifier] Join stream done for: $sessionId');
+        if (state.sessionId == sessionId) {
+          state = state.copyWith(isStreaming: false);
+          _ref.invalidate(chatSessionsProvider);
+        }
+      },
+      onError: (error) {
+        debugPrint('[ChatMessagesNotifier] Join stream error: $error');
+        // Fall back to polling on error
+        _startPollingForStreamCompletion(sessionId);
+      },
+    );
+  }
+
+  /// Poll the server for stream completion when we don't have a local stream
+  ///
+  /// This is a fallback when joining the stream fails. Polls until the server
+  /// reports the stream is done, then reloads the session.
+  void _startPollingForStreamCompletion(String sessionId) {
+    debugPrint('[ChatMessagesNotifier] >>> Starting polling for session: $sessionId');
+    _pollTimer?.cancel();
+
+    // Poll every 2 seconds
+    _pollTimer = Timer.periodic(const Duration(seconds: 2), (timer) async {
+      debugPrint('[ChatMessagesNotifier] >>> Poll tick for session: $sessionId');
+      // Stop if we switched sessions
+      if (state.sessionId != sessionId) {
+        timer.cancel();
+        _pollTimer = null;
+        return;
+      }
+
+      try {
+        final stillActive = await _service.hasActiveStream(sessionId);
+        debugPrint('[ChatMessagesNotifier] Polling stream status for $sessionId: active=$stillActive');
+
+        if (!stillActive) {
+          // Stream completed - reload session to get final content
+          timer.cancel();
+          _pollTimer = null;
+          debugPrint('[ChatMessagesNotifier] Server stream completed - reloading session');
+          state = state.copyWith(isStreaming: false);
+          await loadSession(sessionId);
+          _ref.invalidate(chatSessionsProvider);
+        } else {
+          // Still streaming - reload to get latest content
+          // This gives incremental updates while waiting
+          final transcript = await _service.getSessionTranscript(sessionId);
+          if (transcript != null && transcript.events.isNotEmpty) {
+            final messages = transcript.toMessages();
+            if (messages.length > state.messages.length) {
+              debugPrint('[ChatMessagesNotifier] Got ${messages.length} messages (was ${state.messages.length})');
+              state = state.copyWith(messages: messages);
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('[ChatMessagesNotifier] Polling error: $e');
+        // Don't stop polling on transient errors
+      }
+    });
   }
 
   /// Handle a stream event (used by both direct and background streams)
@@ -680,9 +887,17 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         contexts: contexts,
       )) {
         // Check if session has changed (user switched chats during stream)
-        if (_activeStreamSessionId != sessionId) {
-          debugPrint('[ChatMessagesNotifier] Stream cancelled - session changed from $sessionId');
-          break; // Exit the stream loop
+        // Don't break the stream - let it continue in background so server keeps processing
+        // Just skip UI updates for this session
+        final isBackgroundStream = _activeStreamSessionId != sessionId;
+        if (isBackgroundStream) {
+          // Only process terminal events (done/error) when in background
+          // This keeps the HTTP connection alive so server continues processing
+          if (event.type != StreamEventType.done &&
+              event.type != StreamEventType.error &&
+              event.type != StreamEventType.aborted) {
+            continue; // Skip UI updates but keep consuming stream
+          }
         }
 
         switch (event.type) {
@@ -787,50 +1002,64 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
             break;
 
           case StreamEventType.done:
-            // Stream complete
-            _updateAssistantMessage(accumulatedContent, isStreaming: false);
+            // Stream complete - handle differently for background vs foreground
+            debugPrint('[ChatMessagesNotifier] Done event received (background: $isBackgroundStream, sessionId: $sessionId)');
 
-            // CRITICAL: Capture session ID from done event (for new sessions, this is the first time we get the real ID)
-            final doneSessionId = event.sessionId;
-            if (doneSessionId != null && doneSessionId.isNotEmpty && doneSessionId != actualSessionId) {
-              debugPrint('[ChatMessagesNotifier] Done event has new session ID: $doneSessionId (was: $actualSessionId)');
-              actualSessionId = doneSessionId;
-              _ref.read(currentSessionIdProvider.notifier).state = doneSessionId;
-              // ALSO update state.sessionId so future sendMessage calls use the correct ID
-              state = state.copyWith(sessionId: doneSessionId);
-            }
+            if (!isBackgroundStream) {
+              // Foreground: update UI normally
+              _updateAssistantMessage(accumulatedContent, isStreaming: false);
 
-            // Capture session title if present in done event
-            final doneTitle = event.sessionTitle;
-            // Also capture resume info from done event (may have more complete info)
-            final doneResumeInfo = event.sessionResumeInfo;
-            if (doneResumeInfo != null) {
-              debugPrint('[ChatMessagesNotifier] Done event resume info: ${doneResumeInfo.method}');
-              state = state.copyWith(
-                isStreaming: false,
-                sessionTitle: (doneTitle != null && doneTitle.isNotEmpty) ? doneTitle : null,
-                sessionResumeInfo: doneResumeInfo,
-              );
-            } else if (doneTitle != null && doneTitle.isNotEmpty) {
-              state = state.copyWith(isStreaming: false, sessionTitle: doneTitle);
+              // CRITICAL: Capture session ID from done event (for new sessions, this is the first time we get the real ID)
+              final doneSessionId = event.sessionId;
+              if (doneSessionId != null && doneSessionId.isNotEmpty && doneSessionId != actualSessionId) {
+                debugPrint('[ChatMessagesNotifier] Done event has new session ID: $doneSessionId (was: $actualSessionId)');
+                actualSessionId = doneSessionId;
+                _ref.read(currentSessionIdProvider.notifier).state = doneSessionId;
+                // ALSO update state.sessionId so future sendMessage calls use the correct ID
+                state = state.copyWith(sessionId: doneSessionId);
+              }
+
+              // Capture session title if present in done event
+              final doneTitle = event.sessionTitle;
+              // Also capture resume info from done event (may have more complete info)
+              final doneResumeInfo = event.sessionResumeInfo;
+              if (doneResumeInfo != null) {
+                debugPrint('[ChatMessagesNotifier] Done event resume info: ${doneResumeInfo.method}');
+                state = state.copyWith(
+                  isStreaming: false,
+                  sessionTitle: (doneTitle != null && doneTitle.isNotEmpty) ? doneTitle : null,
+                  sessionResumeInfo: doneResumeInfo,
+                );
+              } else if (doneTitle != null && doneTitle.isNotEmpty) {
+                state = state.copyWith(isStreaming: false, sessionTitle: doneTitle);
+              } else {
+                state = state.copyWith(isStreaming: false);
+              }
             } else {
-              state = state.copyWith(isStreaming: false);
+              // Background: stream completed while user was on another session
+              debugPrint('[ChatMessagesNotifier] Background stream completed for session: $sessionId');
             }
-            // Refresh sessions list to get updated title
+            // Always refresh sessions list to get updated title
             _ref.invalidate(chatSessionsProvider);
             // Search indexing is handled by the agent server via MCP
             break;
 
           case StreamEventType.error:
             final errorMsg = event.errorMessage ?? 'Unknown error';
-            state = state.copyWith(
-              isStreaming: false,
-              error: errorMsg,
-            );
-            // Append error to existing content instead of replacing everything
-            // This preserves thinking/tool progress that was shown before the error
-            accumulatedContent.add(MessageContent.text('\n\n⚠️ Error: $errorMsg'));
-            _updateAssistantMessage(accumulatedContent, isStreaming: false);
+            if (!isBackgroundStream) {
+              // Foreground: show error to user
+              state = state.copyWith(
+                isStreaming: false,
+                error: errorMsg,
+              );
+              // Append error to existing content instead of replacing everything
+              // This preserves thinking/tool progress that was shown before the error
+              accumulatedContent.add(MessageContent.text('\n\n⚠️ Error: $errorMsg'));
+              _updateAssistantMessage(accumulatedContent, isStreaming: false);
+            } else {
+              // Background: just log it
+              debugPrint('[ChatMessagesNotifier] Background stream error for session $sessionId: $errorMsg');
+            }
             break;
 
           case StreamEventType.thinking:
@@ -844,28 +1073,33 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
 
           case StreamEventType.sessionUnavailable:
             // SDK session couldn't be resumed - ask user how to proceed
-            final unavailableInfo = SessionUnavailableInfo(
-              sessionId: event.sessionId ?? actualSessionId ?? '',
-              reason: event.unavailableReason ?? 'unknown',
-              hasMarkdownHistory: event.hasMarkdownHistory,
-              messageCount: event.markdownMessageCount,
-              message: event.unavailableMessage ?? 'Session could not be resumed.',
-              pendingMessage: message,
-            );
-            state = state.copyWith(
-              isStreaming: false,
-              sessionUnavailable: unavailableInfo,
-            );
-            debugPrint('[ChatMessagesNotifier] Session unavailable: ${unavailableInfo.reason}');
+            debugPrint('[ChatMessagesNotifier] Session unavailable (background: $isBackgroundStream)');
+            if (!isBackgroundStream) {
+              final unavailableInfo = SessionUnavailableInfo(
+                sessionId: event.sessionId ?? actualSessionId ?? '',
+                reason: event.unavailableReason ?? 'unknown',
+                hasMarkdownHistory: event.hasMarkdownHistory,
+                messageCount: event.markdownMessageCount,
+                message: event.unavailableMessage ?? 'Session could not be resumed.',
+                pendingMessage: message,
+              );
+              state = state.copyWith(
+                isStreaming: false,
+                sessionUnavailable: unavailableInfo,
+              );
+              debugPrint('[ChatMessagesNotifier] Session unavailable: ${unavailableInfo.reason}');
+            }
             return; // Stop processing, wait for user decision
 
           case StreamEventType.aborted:
             // Stream was stopped by user - session is still valid for future messages
-            debugPrint('[ChatMessagesNotifier] Stream aborted by user');
-            _updateAssistantMessage(accumulatedContent, isStreaming: false);
-            state = state.copyWith(isStreaming: false);
-            // Reload session to get the final state
-            loadSession(actualSessionId ?? sessionId);
+            debugPrint('[ChatMessagesNotifier] Stream aborted (background: $isBackgroundStream, sessionId: $sessionId)');
+            if (!isBackgroundStream) {
+              _updateAssistantMessage(accumulatedContent, isStreaming: false);
+              state = state.copyWith(isStreaming: false);
+              // Reload session to get the final state
+              loadSession(actualSessionId ?? sessionId);
+            }
             return; // Exit the stream loop
 
           case StreamEventType.init:
@@ -875,22 +1109,26 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         }
       }
 
-      // If we exited the loop without a done/error event (e.g., session switch or unexpected stream end),
+      // If we exited the loop without a done/error event (e.g., unexpected stream end),
       // make sure to stop streaming state so the user can send another message
-      if (state.isStreaming) {
+      // But only if this is still the active session
+      if (state.isStreaming && _activeStreamSessionId == sessionId) {
         debugPrint('[ChatMessagesNotifier] Stream ended without done event - cleaning up');
         state = state.copyWith(isStreaming: false);
       }
     } catch (e) {
       debugPrint('[ChatMessagesNotifier] Stream error: $e');
-      state = state.copyWith(
-        isStreaming: false,
-        error: e.toString(),
-      );
-      // Append error to existing content instead of replacing everything
-      // This preserves thinking/tool progress that was shown before the error
-      accumulatedContent.add(MessageContent.text('\n\n⚠️ Error: $e'));
-      _updateAssistantMessage(accumulatedContent, isStreaming: false);
+      // Only update UI if this is still the active session
+      if (_activeStreamSessionId == sessionId) {
+        state = state.copyWith(
+          isStreaming: false,
+          error: e.toString(),
+        );
+        // Append error to existing content instead of replacing everything
+        // This preserves thinking/tool progress that was shown before the error
+        accumulatedContent.add(MessageContent.text('\n\n⚠️ Error: $e'));
+        _updateAssistantMessage(accumulatedContent, isStreaming: false);
+      }
     } finally {
       // Final safety net: ensure streaming is always stopped when sendMessage exits
       if (state.isStreaming && _activeStreamSessionId == sessionId) {

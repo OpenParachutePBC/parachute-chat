@@ -225,14 +225,184 @@ class ChatService {
     }
   }
 
+  /// Check if a session has an active stream on the server
+  ///
+  /// This is used when returning to a chat to see if the server
+  /// is still processing a response.
+  Future<bool> hasActiveStream(String sessionId) async {
+    try {
+      final response = await _client.get(
+        Uri.parse('$baseUrl/api/chat/${Uri.encodeComponent(sessionId)}/stream-status'),
+        headers: {'Content-Type': 'application/json'},
+      ).timeout(const Duration(seconds: 5));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final active = data['active'] as bool? ?? false;
+        debugPrint('[ChatService] Stream status for $sessionId: active=$active');
+        return active;
+      } else {
+        debugPrint('[ChatService] Failed to check stream status: ${response.statusCode}');
+        return false;
+      }
+    } catch (e) {
+      debugPrint('[ChatService] Error checking stream status: $e');
+      return false;
+    }
+  }
+
+  /// Get all sessions with active streams on the server
+  Future<List<String>> getActiveStreams() async {
+    try {
+      final response = await _client.get(
+        Uri.parse('$baseUrl/api/chat/active-streams'),
+        headers: {'Content-Type': 'application/json'},
+      ).timeout(const Duration(seconds: 5));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        // New format returns list of stream info objects
+        final streamsData = data['streams'] as List<dynamic>?;
+        if (streamsData == null) return [];
+
+        // Extract session IDs from stream info objects
+        final streams = streamsData
+            .map((s) {
+              if (s is String) return s;
+              if (s is Map) return s['session_id'] as String?;
+              return null;
+            })
+            .whereType<String>()
+            .toList();
+        debugPrint('[ChatService] Active streams: $streams');
+        return streams;
+      } else {
+        debugPrint('[ChatService] Failed to get active streams: ${response.statusCode}');
+        return [];
+      }
+    } catch (e) {
+      debugPrint('[ChatService] Error getting active streams: $e');
+      return [];
+    }
+  }
+
+  /// Join an existing active stream
+  ///
+  /// Connects to an in-progress stream and receives:
+  /// 1. Buffered events (for catch-up)
+  /// 2. Live events as they occur
+  ///
+  /// Use this when returning to a chat that has an active stream.
+  /// Returns null if no active stream exists (404 from server).
+  Stream<StreamEvent>? joinStream(String sessionId) {
+    debugPrint('[ChatService] Joining stream for session: $sessionId');
+
+    // Create a stream controller to handle the connection
+    final controller = StreamController<StreamEvent>();
+
+    // Make the SSE request
+    _joinStreamConnection(sessionId, controller);
+
+    return controller.stream;
+  }
+
+  Future<void> _joinStreamConnection(
+    String sessionId,
+    StreamController<StreamEvent> controller,
+  ) async {
+    try {
+      final request = http.Request(
+        'GET',
+        Uri.parse('$baseUrl/api/chat/${Uri.encodeComponent(sessionId)}/join'),
+      );
+      request.headers['Accept'] = 'text/event-stream';
+
+      final streamedResponse = await _client.send(request).timeout(
+        const Duration(seconds: 10),
+      );
+
+      if (streamedResponse.statusCode == 404) {
+        debugPrint('[ChatService] No active stream to join for $sessionId');
+        controller.close();
+        return;
+      }
+
+      if (streamedResponse.statusCode != 200) {
+        debugPrint('[ChatService] Failed to join stream: ${streamedResponse.statusCode}');
+        controller.addError('Failed to join stream: ${streamedResponse.statusCode}');
+        controller.close();
+        return;
+      }
+
+      String buffer = '';
+
+      await for (final chunk in streamedResponse.stream.transform(utf8.decoder)) {
+        buffer += chunk;
+
+        // Process complete lines (SSE format)
+        while (buffer.contains('\n')) {
+          final newlineIndex = buffer.indexOf('\n');
+          final line = buffer.substring(0, newlineIndex).trim();
+          buffer = buffer.substring(newlineIndex + 1);
+
+          if (line.isEmpty) continue;
+
+          final event = StreamEvent.parse(line);
+          if (event != null) {
+            debugPrint('[ChatService] Join event: ${event.type}');
+            controller.add(event);
+
+            if (event.type == StreamEventType.done ||
+                event.type == StreamEventType.error) {
+              break;
+            }
+          }
+        }
+      }
+
+      debugPrint('[ChatService] Join stream completed for $sessionId');
+      controller.close();
+    } catch (e) {
+      debugPrint('[ChatService] Error joining stream: $e');
+      controller.addError(e);
+      controller.close();
+    }
+  }
+
   /// Get the full SDK transcript for a session
   ///
   /// Returns rich event history including tool calls, thinking blocks, etc.
   /// This is more detailed than the markdown-based messages.
-  Future<SessionTranscript?> getSessionTranscript(String sessionId) async {
+  ///
+  /// [afterCompact] - Only return events after the last compact boundary (default: true)
+  ///   This is faster for initial load since compacted history is usually summarized.
+  /// [segment] - Load a specific segment by index (0-based, 0 = oldest)
+  ///   Use this to lazy-load older segments on demand.
+  /// [full] - Load all events (overrides afterCompact and segment)
+  ///   Use for export, full search, etc.
+  Future<SessionTranscript?> getSessionTranscript(
+    String sessionId, {
+    bool afterCompact = true,
+    int? segment,
+    bool full = false,
+  }) async {
     try {
+      // Build query parameters
+      final queryParams = <String, String>{
+        'after_compact': afterCompact.toString(),
+      };
+      if (segment != null) {
+        queryParams['segment'] = segment.toString();
+      }
+      if (full) {
+        queryParams['full'] = 'true';
+      }
+
+      final uri = Uri.parse('$baseUrl/api/chat/${Uri.encodeComponent(sessionId)}/transcript')
+          .replace(queryParameters: queryParams);
+
       final response = await _client.get(
-        Uri.parse('$baseUrl/api/chat/${Uri.encodeComponent(sessionId)}/transcript'),
+        uri,
         headers: {'Content-Type': 'application/json'},
       ).timeout(const Duration(seconds: 60)); // Transcripts can be large
 

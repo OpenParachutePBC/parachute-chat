@@ -10,6 +10,7 @@ import 'package:parachute_chat/core/services/performance_service.dart';
 import '../models/chat_message.dart';
 import 'inline_audio_player.dart';
 import 'collapsible_thinking_section.dart';
+import 'collapsible_compact_summary.dart';
 
 /// Intent for copying message text
 class CopyMessageIntent extends Intent {
@@ -47,11 +48,11 @@ class MessageBubble extends ConsumerWidget {
   }
 
   Widget _buildWidget(BuildContext context, bool isUser, bool isDark, String? vaultPath) {
-    return Padding(
+    final messageBubble = Padding(
       padding: EdgeInsets.only(
         left: isUser ? 48 : 0,
         right: isUser ? 0 : 48,
-        bottom: Spacing.sm,
+        bottom: message.isCompactSummary ? 0 : Spacing.sm,
       ),
       child: Align(
         alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
@@ -84,6 +85,23 @@ class MessageBubble extends ConsumerWidget {
         ),
       ),
     );
+
+    // Wrap compact summary messages in a collapsible container
+    if (message.isCompactSummary) {
+      // Get preview text (first ~50 chars of content)
+      final preview = message.textContent.length > 50
+          ? '${message.textContent.substring(0, 47)}...'
+          : message.textContent;
+
+      return CollapsibleCompactSummary(
+        isDark: isDark,
+        initiallyExpanded: false, // Collapsed by default
+        previewText: preview.isNotEmpty ? preview : null,
+        child: messageBubble,
+      );
+    }
+
+    return messageBubble;
   }
 
   List<Widget> _buildContent(BuildContext context, bool isUser, bool isDark, String? vaultPath) {

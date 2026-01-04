@@ -320,6 +320,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           surfaceTintColor: Colors.transparent,
           title: _buildTitle(context, isDark, currentSessionId),
           actions: [
+            // Refresh button (for when streaming reconnection isn't working)
+            if (chatState.sessionId != null && !chatState.isStreaming)
+              IconButton(
+                onPressed: () {
+                  ref.read(chatMessagesProvider.notifier).refreshSession();
+                },
+                icon: const Icon(Icons.refresh, size: 20),
+                tooltip: 'Refresh session',
+              ),
             // Working directory indicator/picker
             if (chatState.workingDirectory != null)
               Tooltip(
@@ -409,17 +418,27 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     : ListView.builder(
                         controller: _scrollController,
                         padding: const EdgeInsets.all(Spacing.md),
-                        itemCount: chatState.messages.length + (chatState.isContinuation ? 1 : 0),
+                        itemCount: chatState.messages.length +
+                            (chatState.isContinuation ? 1 : 0) +
+                            (chatState.hasEarlierSegments ? 1 : 0),
                         itemBuilder: (context, index) {
+                          // Show "load earlier" at the very top if there are earlier segments
+                          if (chatState.hasEarlierSegments && index == 0) {
+                            return _buildLoadEarlierSegmentsButton(isDark, chatState);
+                          }
+
+                          // Adjust index for the load-earlier button
+                          final adjustedIndex = chatState.hasEarlierSegments ? index - 1 : index;
+
                           // Show resume marker at the top if this is a continuation
-                          if (chatState.isContinuation && index == 0) {
+                          if (chatState.isContinuation && adjustedIndex == 0) {
                             return ResumeMarker(
                               key: const ValueKey('resume_marker'),
                               originalSession: chatState.continuedFromSession!,
                               priorMessages: chatState.priorMessages,
                             );
                           }
-                          final msgIndex = chatState.isContinuation ? index - 1 : index;
+                          final msgIndex = chatState.isContinuation ? adjustedIndex - 1 : adjustedIndex;
                           return MessageBubble(
                             message: chatState.messages[msgIndex],
                           );
@@ -520,6 +539,86 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Build button to load earlier segments (shown when conversation history is truncated)
+  Widget _buildLoadEarlierSegmentsButton(bool isDark, ChatMessagesState chatState) {
+    // Find the first unloaded segment that we can load
+    final unloadedSegments = chatState.transcriptSegments
+        .where((s) => !s.loaded && s.index < chatState.transcriptSegmentCount - 1)
+        .toList();
+
+    if (unloadedSegments.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    // Get the most recent unloaded segment (closest to current content)
+    final nextSegment = unloadedSegments.last;
+    final segmentCount = unloadedSegments.length;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: Spacing.md),
+      child: Center(
+        child: InkWell(
+          onTap: () {
+            ref.read(chatMessagesProvider.notifier).loadSegment(nextSegment.index);
+          },
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: Spacing.md,
+              vertical: Spacing.sm,
+            ),
+            decoration: BoxDecoration(
+              color: isDark
+                  ? BrandColors.nightSurfaceElevated
+                  : BrandColors.forestMist.withValues(alpha: 0.3),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: isDark
+                    ? BrandColors.nightSurfaceElevated
+                    : BrandColors.stone.withValues(alpha: 0.2),
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.history,
+                  size: 16,
+                  color: isDark ? BrandColors.nightForest : BrandColors.forest,
+                ),
+                const SizedBox(width: Spacing.xs),
+                Text(
+                  segmentCount > 1
+                      ? 'Load earlier messages ($segmentCount segments)'
+                      : 'Load earlier messages',
+                  style: TextStyle(
+                    fontSize: TypographyTokens.bodySmall,
+                    fontWeight: FontWeight.w500,
+                    color: isDark ? BrandColors.nightForest : BrandColors.forest,
+                  ),
+                ),
+                if (nextSegment.preview != null) ...[
+                  const SizedBox(width: Spacing.sm),
+                  Text(
+                    '• ${nextSegment.preview}',
+                    style: TextStyle(
+                      fontSize: TypographyTokens.bodySmall,
+                      color: isDark
+                          ? BrandColors.nightTextSecondary
+                          : BrandColors.driftwood,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
