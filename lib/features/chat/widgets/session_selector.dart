@@ -5,6 +5,9 @@ import '../models/chat_session.dart';
 import '../providers/chat_providers.dart';
 import '../screens/claude_code_import_screen.dart';
 
+// State provider for showing archived sessions
+final _showArchivedSessionsProvider = StateProvider<bool>((ref) => false);
+
 /// Bottom sheet for selecting and managing chat sessions
 class SessionSelector extends ConsumerWidget {
   const SessionSelector({super.key});
@@ -22,7 +25,10 @@ class SessionSelector extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final sessionsAsync = ref.watch(chatSessionsProvider);
+    final showArchived = ref.watch(_showArchivedSessionsProvider);
+    final sessionsAsync = showArchived
+        ? ref.watch(archivedSessionsProvider)
+        : ref.watch(chatSessionsProvider);
     final currentSessionId = ref.watch(currentSessionIdProvider);
 
     return Container(
@@ -55,7 +61,7 @@ class SessionSelector extends ConsumerWidget {
             child: Row(
               children: [
                 Text(
-                  'Chat Sessions',
+                  showArchived ? 'Archived Sessions' : 'Chat Sessions',
                   style: TextStyle(
                     fontSize: TypographyTokens.titleLarge,
                     fontWeight: FontWeight.w600,
@@ -63,39 +69,56 @@ class SessionSelector extends ConsumerWidget {
                   ),
                 ),
                 const Spacer(),
-                // Import from Claude Code button
+                // Toggle archived sessions button
                 IconButton(
-                  onPressed: () async {
-                    final sessionId = await Navigator.of(context).push<String>(
-                      MaterialPageRoute(
-                        builder: (context) => const ClaudeCodeImportScreen(),
-                      ),
-                    );
-                    if (sessionId != null && context.mounted) {
-                      ref.read(switchSessionProvider)(sessionId);
-                      Navigator.pop(context);
-                    }
+                  onPressed: () {
+                    ref.read(_showArchivedSessionsProvider.notifier).state = !showArchived;
                   },
-                  icon: const Icon(Icons.download, size: 20),
-                  tooltip: 'Import from Claude Code',
+                  icon: Icon(
+                    showArchived ? Icons.inbox : Icons.archive,
+                    size: 20,
+                  ),
+                  tooltip: showArchived ? 'Show Active' : 'Show Archived',
                   style: IconButton.styleFrom(
                     foregroundColor:
-                        isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
+                        isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
                   ),
                 ),
+                // Import from Claude Code button
+                if (!showArchived)
+                  IconButton(
+                    onPressed: () async {
+                      final sessionId = await Navigator.of(context).push<String>(
+                        MaterialPageRoute(
+                          builder: (context) => const ClaudeCodeImportScreen(),
+                        ),
+                      );
+                      if (sessionId != null && context.mounted) {
+                        ref.read(switchSessionProvider)(sessionId);
+                        Navigator.pop(context);
+                      }
+                    },
+                    icon: const Icon(Icons.download, size: 20),
+                    tooltip: 'Import from Claude Code',
+                    style: IconButton.styleFrom(
+                      foregroundColor:
+                          isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
+                    ),
+                  ),
                 // New chat button
-                TextButton.icon(
-                  onPressed: () {
-                    ref.read(newChatProvider)();
-                    Navigator.pop(context);
-                  },
-                  icon: const Icon(Icons.add, size: 18),
-                  label: const Text('New Chat'),
-                  style: TextButton.styleFrom(
-                    foregroundColor:
-                        isDark ? BrandColors.nightForest : BrandColors.forest,
+                if (!showArchived)
+                  TextButton.icon(
+                    onPressed: () {
+                      ref.read(newChatProvider)();
+                      Navigator.pop(context);
+                    },
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('New Chat'),
+                    style: TextButton.styleFrom(
+                      foregroundColor:
+                          isDark ? BrandColors.nightForest : BrandColors.forest,
+                    ),
                   ),
-                ),
               ],
             ),
           ),
@@ -122,6 +145,7 @@ class SessionSelector extends ConsumerWidget {
                       session: session,
                       isSelected: isSelected,
                       isLocal: session.isLocal,
+                      showArchived: showArchived,
                       onTap: () {
                         ref.read(switchSessionProvider)(session.id);
                         Navigator.pop(context);
@@ -133,6 +157,16 @@ class SessionSelector extends ConsumerWidget {
                               if (confirmed == true) {
                                 await ref.read(deleteSessionProvider)(session.id);
                               }
+                            },
+                      onArchive: session.isLocal
+                          ? null // Can't archive local-only sessions via API
+                          : () async {
+                              await ref.read(archiveSessionProvider)(session.id);
+                            },
+                      onUnarchive: session.isLocal
+                          ? null // Can't unarchive local-only sessions via API
+                          : () async {
+                              await ref.read(unarchiveSessionProvider)(session.id);
                             },
                     );
                   },
@@ -255,15 +289,21 @@ class _SessionTile extends StatelessWidget {
   final ChatSession session;
   final bool isSelected;
   final bool isLocal;
+  final bool showArchived;
   final VoidCallback onTap;
   final VoidCallback? onDelete;
+  final VoidCallback? onArchive;
+  final VoidCallback? onUnarchive;
 
   const _SessionTile({
     required this.session,
     required this.isSelected,
     this.isLocal = false,
+    this.showArchived = false,
     required this.onTap,
     this.onDelete,
+    this.onArchive,
+    this.onUnarchive,
   });
 
   @override
@@ -350,23 +390,73 @@ class _SessionTile extends StatelessWidget {
           : null,
     );
 
-    // Only wrap in Dismissible if onDelete is provided
-    if (onDelete != null) {
-      return Dismissible(
-        key: Key(session.id),
-        direction: DismissDirection.endToStart,
-        background: Container(
-          alignment: Alignment.centerRight,
-          padding: const EdgeInsets.only(right: Spacing.lg),
-          color: BrandColors.error,
-          child: const Icon(Icons.delete, color: Colors.white),
-        ),
-        confirmDismiss: (_) async {
-          onDelete!();
-          return false; // We handle deletion in onDelete
-        },
-        child: tile,
-      );
+    // Wrap in Dismissible for swipe actions
+    if (showArchived) {
+      // Archived sessions: swipe to unarchive or delete
+      if (onUnarchive != null || onDelete != null) {
+        return Dismissible(
+          key: Key(session.id),
+          direction: DismissDirection.horizontal,
+          background: onUnarchive != null
+              ? Container(
+                  alignment: Alignment.centerLeft,
+                  padding: const EdgeInsets.only(left: Spacing.lg),
+                  color: isDark ? BrandColors.nightForest : BrandColors.forest,
+                  child: const Icon(Icons.unarchive, color: Colors.white),
+                )
+              : Container(),
+          secondaryBackground: onDelete != null
+              ? Container(
+                  alignment: Alignment.centerRight,
+                  padding: const EdgeInsets.only(right: Spacing.lg),
+                  color: BrandColors.error,
+                  child: const Icon(Icons.delete, color: Colors.white),
+                )
+              : Container(),
+          confirmDismiss: (direction) async {
+            if (direction == DismissDirection.startToEnd && onUnarchive != null) {
+              onUnarchive!();
+            } else if (direction == DismissDirection.endToStart && onDelete != null) {
+              onDelete!();
+            }
+            return false; // We handle the action in callbacks
+          },
+          child: tile,
+        );
+      }
+    } else {
+      // Active sessions: swipe to archive or delete
+      if (onArchive != null || onDelete != null) {
+        return Dismissible(
+          key: Key(session.id),
+          direction: DismissDirection.horizontal,
+          background: onArchive != null
+              ? Container(
+                  alignment: Alignment.centerLeft,
+                  padding: const EdgeInsets.only(left: Spacing.lg),
+                  color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                  child: const Icon(Icons.archive, color: Colors.white),
+                )
+              : Container(),
+          secondaryBackground: onDelete != null
+              ? Container(
+                  alignment: Alignment.centerRight,
+                  padding: const EdgeInsets.only(right: Spacing.lg),
+                  color: BrandColors.error,
+                  child: const Icon(Icons.delete, color: Colors.white),
+                )
+              : Container(),
+          confirmDismiss: (direction) async {
+            if (direction == DismissDirection.startToEnd && onArchive != null) {
+              onArchive!();
+            } else if (direction == DismissDirection.endToStart && onDelete != null) {
+              onDelete!();
+            }
+            return false; // We handle the action in callbacks
+          },
+          child: tile,
+        );
+      }
     }
 
     return tile;

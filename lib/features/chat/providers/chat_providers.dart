@@ -60,7 +60,7 @@ final chatImportServiceProvider = Provider<ChatImportService>((ref) {
 // Session Providers
 // ============================================================
 
-/// Provider for fetching all chat sessions
+/// Provider for fetching all chat sessions (non-archived only)
 ///
 /// Tries to fetch from the server first. If server is unavailable,
 /// falls back to reading local session files from the vault.
@@ -69,7 +69,7 @@ final chatSessionsProvider = FutureProvider<List<ChatSession>>((ref) async {
   final localReader = ref.watch(localSessionReaderProvider);
 
   try {
-    // Try server first
+    // Try server first - gets non-archived sessions by default
     final serverSessions = await service.getSessions();
     debugPrint('[ChatProviders] Loaded ${serverSessions.length} sessions from server');
     return serverSessions;
@@ -80,7 +80,32 @@ final chatSessionsProvider = FutureProvider<List<ChatSession>>((ref) async {
     try {
       final localSessions = await localReader.getLocalSessions();
       debugPrint('[ChatProviders] Loaded ${localSessions.length} local sessions');
-      return localSessions;
+      return localSessions.where((s) => !s.archived).toList();
+    } catch (localError) {
+      debugPrint('[ChatProviders] Error loading local sessions: $localError');
+      return [];
+    }
+  }
+});
+
+/// Provider for fetching archived chat sessions
+final archivedSessionsProvider = FutureProvider<List<ChatSession>>((ref) async {
+  final service = ref.watch(chatServiceProvider);
+  final localReader = ref.watch(localSessionReaderProvider);
+
+  try {
+    // Try server first - explicitly request archived sessions
+    final serverSessions = await service.getSessions(includeArchived: true);
+    debugPrint('[ChatProviders] Loaded ${serverSessions.length} archived sessions from server');
+    return serverSessions;
+  } catch (e) {
+    debugPrint('[ChatProviders] Server unavailable, falling back to local sessions: $e');
+
+    // Fall back to local sessions
+    try {
+      final localSessions = await localReader.getLocalSessions();
+      debugPrint('[ChatProviders] Loaded ${localSessions.length} local sessions');
+      return localSessions.where((s) => s.archived).toList();
     } catch (localError) {
       debugPrint('[ChatProviders] Error loading local sessions: $localError');
       return [];
@@ -980,6 +1005,29 @@ final deleteSessionProvider = Provider<Future<void> Function(String)>((ref) {
     }
     // Refresh sessions list
     ref.invalidate(chatSessionsProvider);
+    ref.invalidate(archivedSessionsProvider);
+  };
+});
+
+/// Provider for archiving a session
+final archiveSessionProvider = Provider<Future<void> Function(String)>((ref) {
+  final service = ref.watch(chatServiceProvider);
+  return (String sessionId) async {
+    await service.archiveSession(sessionId);
+    // Refresh sessions lists
+    ref.invalidate(chatSessionsProvider);
+    ref.invalidate(archivedSessionsProvider);
+  };
+});
+
+/// Provider for unarchiving a session
+final unarchiveSessionProvider = Provider<Future<void> Function(String)>((ref) {
+  final service = ref.watch(chatServiceProvider);
+  return (String sessionId) async {
+    await service.unarchiveSession(sessionId);
+    // Refresh sessions lists
+    ref.invalidate(chatSessionsProvider);
+    ref.invalidate(archivedSessionsProvider);
   };
 });
 

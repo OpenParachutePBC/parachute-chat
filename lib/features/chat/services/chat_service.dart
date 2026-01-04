@@ -35,10 +35,17 @@ class ChatService {
   // ============================================================
 
   /// Get all chat sessions
-  Future<List<ChatSession>> getSessions() async {
+  ///
+  /// By default, only non-archived sessions are returned.
+  /// Pass [includeArchived: true] to get archived sessions as well.
+  Future<List<ChatSession>> getSessions({bool includeArchived = false}) async {
     try {
+      final uri = includeArchived
+          ? Uri.parse('$baseUrl/api/chat?archived=true')
+          : Uri.parse('$baseUrl/api/chat');
+
       final response = await _client.get(
-        Uri.parse('$baseUrl/api/chat'),
+        uri,
         headers: {'Content-Type': 'application/json'},
       ).timeout(requestTimeout);
 
@@ -102,6 +109,46 @@ class ChatService {
       }
     } catch (e) {
       debugPrint('[ChatService] Error deleting session: $e');
+      rethrow;
+    }
+  }
+
+  /// Archive a session
+  Future<ChatSession> archiveSession(String sessionId) async {
+    try {
+      final response = await _client.post(
+        Uri.parse('$baseUrl/api/chat/${Uri.encodeComponent(sessionId)}/archive'),
+        headers: {'Content-Type': 'application/json'},
+      ).timeout(requestTimeout);
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to archive session: ${response.statusCode}');
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return ChatSession.fromJson(data['session'] as Map<String, dynamic>);
+    } catch (e) {
+      debugPrint('[ChatService] Error archiving session: $e');
+      rethrow;
+    }
+  }
+
+  /// Unarchive a session
+  Future<ChatSession> unarchiveSession(String sessionId) async {
+    try {
+      final response = await _client.post(
+        Uri.parse('$baseUrl/api/chat/${Uri.encodeComponent(sessionId)}/unarchive'),
+        headers: {'Content-Type': 'application/json'},
+      ).timeout(requestTimeout);
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to unarchive session: ${response.statusCode}');
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return ChatSession.fromJson(data['session'] as Map<String, dynamic>);
+    } catch (e) {
+      debugPrint('[ChatService] Error unarchiving session: $e');
       rethrow;
     }
   }
