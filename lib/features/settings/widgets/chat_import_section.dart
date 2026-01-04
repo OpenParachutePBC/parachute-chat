@@ -232,7 +232,7 @@ class _ChatImportSectionState extends ConsumerState<ChatImportSection> {
 
     setState(() {
       _isProcessing = true;
-      _statusMessage = 'Importing conversations...';
+      _statusMessage = 'Reading conversations...';
     });
 
     try {
@@ -248,8 +248,11 @@ class _ChatImportSectionState extends ConsumerState<ChatImportSection> {
       final jsonString = await conversationsFile.readAsString();
       final jsonData = jsonDecode(jsonString);
 
+      // Count conversations for progress
+      final totalCount = jsonData is List ? jsonData.length : 0;
+
       setState(() {
-        _statusMessage = 'Sending to server...';
+        _statusMessage = 'Importing $totalCount conversations...';
       });
 
       // Send to API - conversations will be archived by default
@@ -257,9 +260,13 @@ class _ChatImportSectionState extends ConsumerState<ChatImportSection> {
 
       final importedCount = result.importedCount;
       final skippedCount = result.skippedCount;
+      final errorCount = result.errors.length;
 
       if (result.hasErrors) {
-        debugPrint('[ChatImportSection] Import had errors: ${result.errors}');
+        debugPrint('[ChatImportSection] Import had ${result.errors.length} errors:');
+        for (final error in result.errors.take(5)) {
+          debugPrint('  - $error');
+        }
       }
 
       // Refresh chat sessions list
@@ -270,16 +277,19 @@ class _ChatImportSectionState extends ConsumerState<ChatImportSection> {
         String message;
         if (importedCount == 0 && skippedCount > 0) {
           message = 'All $skippedCount conversations already imported';
+        } else if (errorCount > 0) {
+          message = 'Imported $importedCount, skipped $skippedCount empty/invalid';
         } else if (skippedCount > 0) {
-          message = 'Imported $importedCount new, skipped $skippedCount existing';
+          message = 'Imported $importedCount, skipped $skippedCount (empty or no messages)';
         } else {
-          message = 'Imported $importedCount conversations';
+          message = 'Imported $importedCount conversations to archive';
         }
 
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(message),
             backgroundColor: BrandColors.success,
+            duration: const Duration(seconds: 4),
           ),
         );
         // Don't clear _detectedExport - let user do other actions too
@@ -334,7 +344,10 @@ class _ChatImportSectionState extends ConsumerState<ChatImportSection> {
         SizedBox(height: Spacing.lg),
 
         // Show detected export or picker UI
-        if (_detectedExport != null)
+        // Note: Show processing card when importing even if export is detected
+        if (_isProcessing && _detectedExport != null)
+          _buildImportingCard(isDark)
+        else if (_detectedExport != null)
           _buildDetectedExportCard(isDark)
         else if (_isProcessing)
           _buildProcessingCard(isDark)
@@ -474,6 +487,60 @@ class _ChatImportSectionState extends ConsumerState<ChatImportSection> {
             _statusMessage ?? 'Processing...',
             style: TextStyle(
               color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildImportingCard(bool isDark) {
+    return Container(
+      padding: EdgeInsets.all(Spacing.xl),
+      decoration: BoxDecoration(
+        color: isDark
+            ? BrandColors.nightSurfaceElevated
+            : BrandColors.softWhite,
+        borderRadius: BorderRadius.circular(Radii.md),
+        border: Border.all(
+          color: BrandColors.turquoise.withValues(alpha: 0.5),
+          width: 2,
+        ),
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(
+                  strokeWidth: 3,
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
+                  ),
+                ),
+              ),
+              SizedBox(width: Spacing.md),
+              Text(
+                _statusMessage ?? 'Importing...',
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: TypographyTokens.bodyLarge,
+                  color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: Spacing.sm),
+          Text(
+            'This may take a moment for large exports',
+            style: TextStyle(
+              fontSize: TypographyTokens.bodySmall,
+              color: isDark
+                  ? BrandColors.nightTextSecondary
+                  : BrandColors.driftwood,
             ),
           ),
         ],

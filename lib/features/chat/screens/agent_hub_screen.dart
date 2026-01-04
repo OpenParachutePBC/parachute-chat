@@ -34,7 +34,28 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final sessionsAsync = ref.watch(chatSessionsProvider);
+    // Watch both active and archived sessions
+    final activeSessionsAsync = ref.watch(chatSessionsProvider);
+    final archivedSessionsAsync = ref.watch(archivedSessionsProvider);
+
+    // Combine both lists for filtering
+    final sessionsAsync = activeSessionsAsync.when(
+      data: (activeSessions) => archivedSessionsAsync.when(
+        data: (archivedSessions) {
+          // Combine active + archived (avoiding duplicates)
+          final activeIds = activeSessions.map((s) => s.id).toSet();
+          final allSessions = [
+            ...activeSessions,
+            ...archivedSessions.where((s) => !activeIds.contains(s.id)),
+          ];
+          return AsyncValue.data(allSessions);
+        },
+        loading: () => AsyncValue.data(activeSessions), // Show active while archived loads
+        error: (e, st) => AsyncValue.data(activeSessions), // Fallback to active only
+      ),
+      loading: () => const AsyncValue<List<ChatSession>>.loading(),
+      error: (e, st) => AsyncValue<List<ChatSession>>.error(e, st),
+    );
 
     return Scaffold(
       backgroundColor: isDark ? BrandColors.nightSurface : BrandColors.cream,
