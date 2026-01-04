@@ -156,7 +156,8 @@ class ChatMessagesState {
   /// Messages from the original session (for display in resume marker)
   final List<ChatMessage> priorMessages;
 
-  /// The session being viewed (for imported sessions that can be continued)
+  /// The session being viewed (for archived sessions that need to be resumed)
+  /// Set when loading an archived session - shows "Resume" prompt
   final ChatSession? viewingSession;
 
   /// Information about how the session was resumed
@@ -201,8 +202,9 @@ class ChatMessagesState {
   /// Whether this session is continuing from another
   bool get isContinuation => continuedFromSession != null;
 
-  /// Whether we're viewing an imported session that can be continued
-  bool get isViewingImported => viewingSession?.isImported ?? false;
+  /// Whether we're viewing an archived session that needs to be resumed
+  /// Archived sessions show a "Resume" prompt and disabled input until resumed
+  bool get isViewingArchived => viewingSession?.archived ?? false;
 
   /// Whether there are earlier segments that haven't been loaded yet
   bool get hasEarlierSegments => transcriptSegmentCount > 1 &&
@@ -295,14 +297,15 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
 
   ChatMessagesNotifier(this._service, this._ref) : super(const ChatMessagesState());
 
-  /// Enable input for an imported session so the user can resume it
+  /// Enable input for an archived session so the user can resume it
   ///
-  /// This clears the "viewing imported" state while keeping the session loaded,
+  /// This clears the "viewing archived" state while keeping the session loaded,
   /// allowing the user to send messages to continue the conversation.
+  /// Also unarchives the session on the server.
   void enableSessionInput(ChatSession session) {
     // Clear viewingSession to enable input, but keep everything else
     state = state.copyWith(
-      clearViewingSession: true,  // This enables input (isViewingImported becomes false)
+      clearViewingSession: true,  // This enables input (isViewingArchived becomes false)
       currentSession: session,  // Keep the session for sending messages
     );
     // Update the current session ID provider so messages go to this session
@@ -445,7 +448,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         sessionId: sessionId,
         sessionTitle: loadedSession.title,
         workingDirectory: loadedSession.workingDirectory,
-        viewingSession: loadedSession.isImported ? loadedSession : null,
+        viewingSession: loadedSession.archived ? loadedSession : null,
         priorMessages: priorMessages,
         continuedFromSession: continuedFromSession,
         isStreaming: hasActiveStream,
@@ -571,6 +574,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
   void _joinActiveServerStream(String sessionId) {
     debugPrint('[ChatMessagesNotifier] >>> Joining active server stream for: $sessionId');
     _joinStreamSubscription?.cancel();
+    _joinStreamContent = []; // Reset accumulated content for this stream
 
     // Try to join the stream
     final stream = _service.joinStream(sessionId);
@@ -657,34 +661,164 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
     });
   }
 
+  /// Accumulated content for joined streams (separate from sendMessage's content)
+  List<MessageContent> _joinStreamContent = [];
+
   /// Handle a stream event (used by both direct and background streams)
+  ///
+  /// Unlike sendMessage which creates the assistant message, this is used when
+  /// joining an existing stream - we need to append/update content.
   void _handleStreamEvent(StreamEvent event, String sessionId) {
     // Only process if we're still on this session
     if (state.sessionId != sessionId) return;
 
     switch (event.type) {
+      case StreamEventType.session:
+        // Capture model info if provided
+        debugPrint('[ChatMessagesNotifier] Join stream session event');
+        break;
+
+      case StreamEventType.model:
+        final model = event.model;
+        if (model != null) {
+          debugPrint('[ChatMessagesNotifier] Join stream model: $model');
+          state = state.copyWith(model: model);
+        }
+        break;
+
+      case StreamEventType.text:
+        // Text content from server - accumulate it
+        final content = event.textContent;
+        if (content != null) {
+          // Replace or add text content
+          final hasTextContent = _joinStreamContent.any((c) => c.type == ContentType.text);
+          if (hasTextContent) {
+            final lastTextIndex = _joinStreamContent.lastIndexWhere(
+                (c) => c.type == ContentType.text);
+            _joinStreamContent[lastTextIndex] = MessageContent.text(content);
+          } else {
+            _joinStreamContent.add(MessageContent.text(content));
+          }
+          _updateOrAddAssistantMessage(_joinStreamContent, sessionId, isStreaming: true);
+        }
+        break;
+
+      case StreamEventType.toolUse:
+        // Tool call event
+        final toolCall = event.toolCall;
+        if (toolCall != null) {
+          // Convert any pending text to thinking before tool
+          final lastTextIndex = _joinStreamContent.lastIndexWhere(
+              (c) => c.type == ContentType.text);
+          if (lastTextIndex >= 0) {
+            final thinkingText = _joinStreamContent[lastTextIndex].text ?? '';
+            if (thinkingText.isNotEmpty) {
+              _joinStreamContent[lastTextIndex] = MessageContent.thinking(thinkingText);
+            }
+          }
+          _joinStreamContent.add(MessageContent.toolUse(toolCall));
+          _updateOrAddAssistantMessage(_joinStreamContent, sessionId, isStreaming: true);
+        }
+        break;
+
+      case StreamEventType.toolResult:
+        // Tool result - update the corresponding tool call
+        final toolUseId = event.toolUseId;
+        final resultContent = event.toolResultContent;
+        if (toolUseId != null && resultContent != null) {
+          for (int i = 0; i < _joinStreamContent.length; i++) {
+            final content = _joinStreamContent[i];
+            if (content.type == ContentType.toolUse &&
+                content.toolCall?.id == toolUseId) {
+              final updatedToolCall = content.toolCall!.withResult(
+                resultContent,
+                isError: event.toolResultIsError,
+              );
+              _joinStreamContent[i] = MessageContent.toolUse(updatedToolCall);
+              _updateOrAddAssistantMessage(_joinStreamContent, sessionId, isStreaming: true);
+              break;
+            }
+          }
+        }
+        break;
+
+      case StreamEventType.thinking:
+        // Extended thinking content
+        final thinkingText = event.thinkingContent;
+        if (thinkingText != null && thinkingText.isNotEmpty) {
+          _joinStreamContent.add(MessageContent.thinking(thinkingText));
+          _updateOrAddAssistantMessage(_joinStreamContent, sessionId, isStreaming: true);
+        }
+        break;
+
       case StreamEventType.done:
+        _updateOrAddAssistantMessage(_joinStreamContent, sessionId, isStreaming: false);
+        _joinStreamContent = []; // Reset for next stream
         state = state.copyWith(isStreaming: false);
         // Reload to get final state
         loadSession(sessionId);
         break;
+
       case StreamEventType.aborted:
         // Stream was stopped by user - session is still valid
+        _updateOrAddAssistantMessage(_joinStreamContent, sessionId, isStreaming: false);
+        _joinStreamContent = [];
         state = state.copyWith(isStreaming: false);
         debugPrint('[ChatMessagesNotifier] Stream aborted: ${event.abortedMessage}');
         // Reload to get current state (conversation continues)
         loadSession(sessionId);
         break;
+
       case StreamEventType.error:
+        _joinStreamContent = [];
         state = state.copyWith(
           isStreaming: false,
           error: event.errorMessage ?? 'Unknown error',
         );
         break;
-      default:
-        // Other events are handled by the main sendMessage loop
+
+      case StreamEventType.init:
+      case StreamEventType.sessionUnavailable:
+      case StreamEventType.unknown:
+        // Ignore these events in join stream
         break;
     }
+  }
+
+  /// Update or add an assistant message for joined streams
+  ///
+  /// Unlike sendMessage, we may be joining mid-stream where the assistant message
+  /// already exists, or we may be catching up from buffer where we need to add it.
+  void _updateOrAddAssistantMessage(
+    List<MessageContent> content,
+    String sessionId,
+    {required bool isStreaming}
+  ) {
+    if (content.isEmpty) return;
+
+    final messages = List<ChatMessage>.from(state.messages);
+
+    // Check if the last message is an assistant message that's streaming
+    if (messages.isNotEmpty &&
+        messages.last.role == MessageRole.assistant) {
+      // Update existing assistant message
+      messages[messages.length - 1] = messages.last.copyWith(
+        content: List.from(content),
+        isStreaming: isStreaming,
+      );
+    } else {
+      // Need to add a new assistant message
+      messages.add(ChatMessage(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        sessionId: sessionId,
+        role: MessageRole.assistant,
+        content: List.from(content),
+        timestamp: DateTime.now(),
+        isStreaming: isStreaming,
+      ));
+    }
+
+    state = state.copyWith(messages: messages);
   }
 
   /// Abort the current streaming session

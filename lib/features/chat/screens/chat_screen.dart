@@ -450,20 +450,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           if (chatState.error != null)
             _buildErrorBanner(context, isDark, chatState.error!),
 
-          // Continue button for imported sessions
-          if (chatState.isViewingImported)
+          // Resume button for archived sessions
+          if (chatState.isViewingArchived)
             _buildContinueButton(context, isDark, chatState),
 
-          // Input field - disabled when viewing imported sessions (use Resume button)
+          // Input field - disabled when viewing archived sessions (use Resume button)
           ChatInput(
             onSend: _handleSend,
             onStop: _handleStop,
-            enabled: !chatState.isStreaming && !chatState.isViewingImported,
+            enabled: !chatState.isStreaming && !chatState.isViewingArchived,
             isStreaming: chatState.isStreaming,
             initialText: widget.initialMessage,
             hintText: _pendingInitialContext != null
                 ? 'Ask about this recording...'
-                : chatState.isViewingImported
+                : chatState.isViewingArchived
                     ? 'Click Resume to continue this conversation'
                     : 'Message your vault...',
           ),
@@ -803,6 +803,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   ) {
     final session = chatState.viewingSession!;
 
+    // Determine the status text based on session type
+    final statusText = session.isImported
+        ? 'Imported from ${session.source.displayName}'
+        : 'Archived chat';
+    final statusIcon = session.isImported ? Icons.history : Icons.archive_outlined;
+
     return Container(
       padding: const EdgeInsets.symmetric(
         horizontal: Spacing.md,
@@ -823,14 +829,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       child: Row(
         children: [
           Icon(
-            Icons.history,
+            statusIcon,
             size: 16,
             color: isDark ? BrandColors.nightForest : BrandColors.forest,
           ),
           const SizedBox(width: Spacing.sm),
           Expanded(
             child: Text(
-              'Imported from ${session.source.displayName}',
+              statusText,
               style: TextStyle(
                 fontSize: TypographyTokens.labelSmall,
                 color: isDark
@@ -933,11 +939,22 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     return BrandColors.forest; // Default
   }
 
-  /// Resume an imported session - just enable the input to continue
-  void _resumeSession(ChatSession session) {
-    // Clear the "viewing imported" state so the input becomes enabled
+  /// Resume an archived session - unarchive and enable input
+  Future<void> _resumeSession(ChatSession session) async {
+    // Unarchive the session on the server
+    try {
+      await ref.read(unarchiveSessionProvider)(session.id);
+    } catch (e) {
+      debugPrint('[ChatScreen] Failed to unarchive session: $e');
+      // Continue anyway - the local state change is more important
+    }
+
+    // Clear the "viewing archived" state so the input becomes enabled
     // The user can now type and send messages to resume the conversation
     ref.read(chatMessagesProvider.notifier).enableSessionInput(session);
+
+    // Refresh sessions list to reflect the unarchived state
+    ref.invalidate(chatSessionsProvider);
   }
 }
 
