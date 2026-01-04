@@ -1,19 +1,22 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
-import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
 import 'package:http/http.dart' as http;
 import 'package:archive/archive.dart';
 
 import 'parakeet_service.dart' as parakeet;
+import 'sherpa_onnx_isolate.dart' as isolate;
 
 /// Platform-adaptive transcription service using Parakeet v3
 ///
 /// Uses Parakeet via different implementations:
 /// - iOS/macOS: FluidAudio (CoreML-based, Apple Neural Engine) via ParakeetService
-/// - Android: Sherpa-ONNX (ONNX Runtime-based) built-in
+/// - Android: Sherpa-ONNX (ONNX Runtime-based) via background isolate
+///
+/// The Android implementation uses a background isolate to prevent UI blocking
+/// during long transcriptions (fixes "not responding" issue).
 ///
 /// This provides fast, offline transcription with 25-language support.
 class TranscriptionService {
@@ -23,17 +26,18 @@ class TranscriptionService {
 
   final parakeet.ParakeetService _parakeetService = parakeet.ParakeetService();
 
-  // Sherpa-ONNX state (Android)
-  sherpa.OfflineRecognizer? _recognizer;
-  bool _sherpaInitialized = false;
+  // Sherpa-ONNX via background isolate (Android) - prevents UI blocking
+  final isolate.SherpaOnnxIsolate _sherpaIsolate = isolate.SherpaOnnxIsolate.instance;
+
+  // Initialization state
   bool _isInitializing = false;
-  String _modelPath = '';
 
   bool get isInitialized {
     if (Platform.isIOS || Platform.isMacOS) {
       return _parakeetService.isInitialized;
     }
-    return _sherpaInitialized;
+    // Use isolate-based initialization on Android
+    return _sherpaIsolate.isInitialized;
   }
 
   bool get isSupported {
@@ -99,46 +103,26 @@ class TranscriptionService {
     Function(double progress)? onProgress,
     Function(String status)? onStatus,
   }) async {
-    debugPrint('[TranscriptionService] Initializing Sherpa-ONNX...');
+    debugPrint('[TranscriptionService] Initializing Sherpa-ONNX via background isolate...');
     onStatus?.call('Initializing Sherpa-ONNX...');
 
-    // Download models if needed
-    final modelDir = await _ensureModelsDownloaded(
+    // Check if models need to be downloaded first (done on main thread)
+    final modelsAvailable = await _sherpaIsolate.checkModelsAvailable();
+    if (!modelsAvailable) {
+      // Download models on main thread (with progress updates)
+      await _ensureModelsDownloaded(
+        onProgress: onProgress,
+        onStatus: onStatus,
+      );
+    }
+
+    // Initialize the isolate (loads models in background thread)
+    await _sherpaIsolate.initialize(
       onProgress: onProgress,
       onStatus: onStatus,
     );
-    _modelPath = modelDir;
 
-    onStatus?.call('Configuring model...');
-    onProgress?.call(0.9);
-
-    // Configure Parakeet TDT model
-    final modelConfig = sherpa.OfflineTransducerModelConfig(
-      encoder: path.join(modelDir, 'encoder.int8.onnx'),
-      decoder: path.join(modelDir, 'decoder.int8.onnx'),
-      joiner: path.join(modelDir, 'joiner.int8.onnx'),
-    );
-
-    final numThreads = Platform.numberOfProcessors;
-    final optimalThreads = (numThreads * 0.75).ceil().clamp(4, 8);
-
-    final config = sherpa.OfflineRecognizerConfig(
-      model: sherpa.OfflineModelConfig(
-        transducer: modelConfig,
-        tokens: path.join(modelDir, 'tokens.txt'),
-        numThreads: optimalThreads,
-        debug: kDebugMode,
-        modelType: 'nemo_transducer',
-      ),
-    );
-
-    sherpa.initBindings();
-    _recognizer = sherpa.OfflineRecognizer(config);
-    _sherpaInitialized = true;
-
-    debugPrint('[TranscriptionService] ✅ Sherpa-ONNX ready');
-    onProgress?.call(1.0);
-    onStatus?.call('Ready');
+    debugPrint('[TranscriptionService] ✅ Sherpa-ONNX ready (via isolate)');
   }
 
   /// Transcribe audio file
@@ -179,8 +163,8 @@ class TranscriptionService {
     String audioPath, {
     Function(double progress)? onProgress,
   }) async {
-    if (_recognizer == null) {
-      throw StateError('Sherpa-ONNX not initialized');
+    if (!_sherpaIsolate.isInitialized) {
+      throw StateError('Sherpa-ONNX isolate not initialized');
     }
 
     final file = File(audioPath);
@@ -188,52 +172,21 @@ class TranscriptionService {
       throw ArgumentError('Audio file not found: $audioPath');
     }
 
-    final startTime = DateTime.now();
-    onProgress?.call(0.1);
+    debugPrint('[TranscriptionService] Transcribing in background isolate: $audioPath');
 
-    // Load WAV samples
-    final samples = await _loadWavSamples(audioPath);
-    onProgress?.call(0.3);
+    // Transcribe in background isolate - UI stays responsive!
+    final result = await _sherpaIsolate.transcribeAudio(
+      audioPath,
+      onProgress: onProgress,
+    );
 
-    // Create stream and transcribe
-    final stream = _recognizer!.createStream();
-    stream.acceptWaveform(samples: samples, sampleRate: 16000);
-    _recognizer!.decode(stream);
-
-    final result = _recognizer!.getResult(stream);
-    stream.free();
-
-    final duration = DateTime.now().difference(startTime);
-    onProgress?.call(1.0);
-
-    debugPrint('[TranscriptionService] ✅ Transcribed in ${duration.inMilliseconds}ms');
+    debugPrint('[TranscriptionService] ✅ Transcribed in ${result.duration.inMilliseconds}ms');
 
     return TranscriptionResult(
-      text: result.text.trim(),
-      language: 'auto',
-      duration: duration,
+      text: result.text,
+      language: result.language,
+      duration: result.duration,
     );
-  }
-
-  Future<Float32List> _loadWavSamples(String audioPath) async {
-    final file = File(audioPath);
-    final bytes = await file.readAsBytes();
-
-    // Skip WAV header (44 bytes), convert PCM16 to float
-    const headerSize = 44;
-    final numSamples = (bytes.length - headerSize) ~/ 2;
-    final samples = Float32List(numSamples);
-
-    for (int i = 0; i < numSamples; i++) {
-      final byteIndex = headerSize + (i * 2);
-      if (byteIndex + 1 >= bytes.length) break;
-
-      final sample = (bytes[byteIndex + 1] << 8) | bytes[byteIndex];
-      final signedSample = sample > 32767 ? sample - 65536 : sample;
-      samples[i] = signedSample / 32768.0;
-    }
-
-    return samples;
   }
 
   Future<String> _ensureModelsDownloaded({
@@ -341,13 +294,12 @@ class TranscriptionService {
     if (Platform.isIOS || Platform.isMacOS) {
       return await _parakeetService.isReady();
     }
-    return _sherpaInitialized && _recognizer != null;
+    return _sherpaIsolate.isInitialized;
   }
 
   void dispose() {
-    _recognizer?.free();
-    _recognizer = null;
-    _sherpaInitialized = false;
+    // Dispose isolate on Android
+    _sherpaIsolate.dispose();
   }
 }
 
