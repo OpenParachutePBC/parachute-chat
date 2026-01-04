@@ -827,10 +827,10 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
               isStreaming: false,
               error: errorMsg,
             );
-            _updateAssistantMessage(
-              [MessageContent.text('Error: $errorMsg')],
-              isStreaming: false,
-            );
+            // Append error to existing content instead of replacing everything
+            // This preserves thinking/tool progress that was shown before the error
+            accumulatedContent.add(MessageContent.text('\n\n⚠️ Error: $errorMsg'));
+            _updateAssistantMessage(accumulatedContent, isStreaming: false);
             break;
 
           case StreamEventType.thinking:
@@ -887,10 +887,10 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         isStreaming: false,
         error: e.toString(),
       );
-      _updateAssistantMessage(
-        [MessageContent.text('Error: $e')],
-        isStreaming: false,
-      );
+      // Append error to existing content instead of replacing everything
+      // This preserves thinking/tool progress that was shown before the error
+      accumulatedContent.add(MessageContent.text('\n\n⚠️ Error: $e'));
+      _updateAssistantMessage(accumulatedContent, isStreaming: false);
     } finally {
       // Final safety net: ensure streaming is always stopped when sendMessage exits
       if (state.isStreaming && _activeStreamSessionId == sessionId) {

@@ -529,7 +529,8 @@ class ChatService {
 
     // Timeouts for streaming requests
     const connectionTimeout = Duration(seconds: 30);
-    const chunkTimeout = Duration(seconds: 60); // Allow time for AI thinking
+    // Allow generous time for AI thinking and tool execution (e.g., builds, tests)
+    const chunkTimeout = Duration(minutes: 3);
 
     try {
       final streamedResponse = await _client.send(request).timeout(
