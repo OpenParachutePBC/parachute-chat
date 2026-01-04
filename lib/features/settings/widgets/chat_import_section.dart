@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,7 +8,6 @@ import 'package:path/path.dart' as p;
 import 'package:parachute_chat/core/theme/design_tokens.dart';
 import 'package:parachute_chat/core/providers/file_system_provider.dart';
 import 'package:parachute_chat/core/services/export_detection_service.dart';
-import 'package:parachute_chat/core/services/conversation_import_service.dart';
 import 'package:parachute_chat/features/chat/providers/chat_providers.dart';
 import 'package:parachute_chat/features/context/providers/context_providers.dart';
 import './settings_section_header.dart';
@@ -236,36 +236,35 @@ class _ChatImportSectionState extends ConsumerState<ChatImportSection> {
     });
 
     try {
-      final convImportService = ref.read(conversationImportServiceProvider);
+      final chatService = ref.read(chatServiceProvider);
 
-      int importedCount = 0;
-      int skippedCount = 0;
-
-      // Use the new streaming import service
-      Stream<ImportProgress> progressStream;
-      if (_detectedExport!.type == ExportType.chatgpt) {
-        progressStream = convImportService.importChatGPTConversations(_detectedExport!.path);
-      } else {
-        progressStream = convImportService.importClaudeConversations(_detectedExport!.path);
+      // Read conversations.json from export
+      final conversationsFile = File(p.join(_detectedExport!.path, 'conversations.json'));
+      if (!await conversationsFile.exists()) {
+        _showError('conversations.json not found in export');
+        return;
       }
 
-      await for (final progress in progressStream) {
-        if (mounted) {
-          setState(() {
-            _statusMessage = 'Importing: ${progress.currentTitle}';
-          });
-        }
+      final jsonString = await conversationsFile.readAsString();
+      final jsonData = jsonDecode(jsonString);
 
-        if (progress.isComplete) {
-          importedCount = progress.processed;
-          // Calculate skipped based on total vs what we expected
-          final expectedTotal = _detectedExport!.conversationCount ?? progress.total;
-          skippedCount = expectedTotal - importedCount;
-        }
+      setState(() {
+        _statusMessage = 'Sending to server...';
+      });
+
+      // Send to API - conversations will be archived by default
+      final result = await chatService.importConversations(jsonData, archived: true);
+
+      final importedCount = result.importedCount;
+      final skippedCount = result.skippedCount;
+
+      if (result.hasErrors) {
+        debugPrint('[ChatImportSection] Import had errors: ${result.errors}');
       }
 
       // Refresh chat sessions list
       ref.invalidate(chatSessionsProvider);
+      ref.invalidate(archivedSessionsProvider);
 
       if (mounted) {
         String message;

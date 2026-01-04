@@ -632,9 +632,7 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
   }
 
   void _handleSessionTap(BuildContext context, ChatSession session) {
-    // For imported/local sessions, use the local reader
-    final isLocal = session.isImported || session.isLocal;
-    ref.read(switchSessionProvider)(session.id, isLocal: isLocal);
+    ref.read(switchSessionProvider)(session.id);
 
     Navigator.of(context).push(
       MaterialPageRoute(

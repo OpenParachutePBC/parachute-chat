@@ -206,23 +206,25 @@ class ChatMessagesState {
     ChatSession? continuedFromSession,
     List<ChatMessage>? priorMessages,
     ChatSession? viewingSession,
+    ChatSession? currentSession,
     SessionResumeInfo? sessionResumeInfo,
     SessionUnavailableInfo? sessionUnavailable,
     String? model,
     bool clearSessionUnavailable = false,
     bool clearWorkingDirectory = false,
+    bool clearViewingSession = false,
   }) {
     return ChatMessagesState(
       messages: messages ?? this.messages,
       isStreaming: isStreaming ?? this.isStreaming,
       isLoading: isLoading ?? this.isLoading,
       error: error,
-      sessionId: sessionId ?? this.sessionId,
-      sessionTitle: sessionTitle ?? this.sessionTitle,
-      workingDirectory: clearWorkingDirectory ? null : (workingDirectory ?? this.workingDirectory),
+      sessionId: sessionId ?? currentSession?.id ?? this.sessionId,
+      sessionTitle: sessionTitle ?? currentSession?.title ?? this.sessionTitle,
+      workingDirectory: clearWorkingDirectory ? null : (workingDirectory ?? currentSession?.workingDirectory ?? this.workingDirectory),
       continuedFromSession: continuedFromSession ?? this.continuedFromSession,
       priorMessages: priorMessages ?? this.priorMessages,
-      viewingSession: viewingSession ?? this.viewingSession,
+      viewingSession: clearViewingSession ? null : (viewingSession ?? this.viewingSession),
       model: model ?? this.model,
       sessionResumeInfo: sessionResumeInfo ?? this.sessionResumeInfo,
       sessionUnavailable: clearSessionUnavailable ? null : (sessionUnavailable ?? this.sessionUnavailable),
@@ -276,6 +278,20 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
 
   ChatMessagesNotifier(this._service, this._ref) : super(const ChatMessagesState());
 
+  /// Enable input for an imported session so the user can resume it
+  ///
+  /// This clears the "viewing imported" state while keeping the session loaded,
+  /// allowing the user to send messages to continue the conversation.
+  void enableSessionInput(ChatSession session) {
+    // Clear viewingSession to enable input, but keep everything else
+    state = state.copyWith(
+      clearViewingSession: true,  // This enables input (isViewingImported becomes false)
+      currentSession: session,  // Keep the session for sending messages
+    );
+    // Update the current session ID provider so messages go to this session
+    _ref.read(currentSessionIdProvider.notifier).state = session.id;
+  }
+
   /// Prepare state for switching to a new session
   ///
   /// Clears old messages immediately and shows loading state to prevent
@@ -301,12 +317,12 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
   /// Load messages for a session
   ///
   /// First tries to load the rich SDK transcript (with tool calls, thinking, etc.),
-  /// then falls back to markdown messages, then local files.
+  /// then falls back to markdown messages from the API.
   /// Also cancels any active stream by invalidating the stream session ID.
   /// If the session was continued from another session, loads prior messages too.
   /// If there's an active background stream for this session, reattaches to it.
-  Future<void> loadSession(String sessionId, {bool isLocal = false}) async {
-    final trace = perf.trace('LoadSession', metadata: {'sessionId': sessionId, 'isLocal': isLocal});
+  Future<void> loadSession(String sessionId) async {
+    final trace = perf.trace('LoadSession', metadata: {'sessionId': sessionId});
 
     // Cancel subscription to current stream (but let it continue in background)
     _currentStreamSubscription?.cancel();
@@ -325,44 +341,34 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
       List<ChatMessage> loadedMessages = [];
       bool usedTranscript = false;
 
-      // Try server first unless we know it's local
-      if (!isLocal) {
-        try {
-          // First try to get the rich transcript (has tool calls, thinking, etc.)
-          final transcript = await _service.getSessionTranscript(sessionId);
-          if (transcript != null && transcript.events.isNotEmpty) {
-            loadedMessages = transcript.toMessages();
-            usedTranscript = true;
-            debugPrint('[ChatMessagesNotifier] Loaded ${loadedMessages.length} messages from SDK transcript (${transcript.eventCount} events)');
-          }
+      debugPrint('[ChatMessagesNotifier] Loading session from server: $sessionId');
 
-          // Get session metadata (we still need this for title, workingDirectory, etc.)
-          final sessionData = await _service.getSession(sessionId);
-          if (sessionData != null) {
-            loadedSession = sessionData.session;
-            // Only use markdown messages if transcript didn't provide any
-            if (!usedTranscript || loadedMessages.isEmpty) {
-              loadedMessages = sessionData.messages;
-              debugPrint('[ChatMessagesNotifier] Using ${loadedMessages.length} messages from markdown');
-            }
-          }
-        } catch (e) {
-          debugPrint('[ChatMessagesNotifier] Server unavailable, trying local: $e');
+      try {
+        // First try to get the rich transcript (has tool calls, thinking, etc.)
+        final transcript = await _service.getSessionTranscript(sessionId);
+        if (transcript != null && transcript.events.isNotEmpty) {
+          loadedMessages = transcript.toMessages();
+          usedTranscript = true;
+          debugPrint('[ChatMessagesNotifier] Loaded ${loadedMessages.length} messages from SDK transcript (${transcript.eventCount} events)');
         }
-      }
 
-      // Fall back to local session reader if not found on server
-      if (loadedSession == null) {
-        final localReader = _ref.read(localSessionReaderProvider);
-        final localSession = await localReader.getSession(sessionId);
-        if (localSession != null) {
-          loadedSession = localSession.session;
-          loadedMessages = localSession.messages;
+        // Get session metadata (we still need this for title, workingDirectory, etc.)
+        final sessionData = await _service.getSession(sessionId);
+        if (sessionData != null) {
+          loadedSession = sessionData.session;
+          // Only use markdown messages if transcript didn't provide any
+          if (!usedTranscript || loadedMessages.isEmpty) {
+            loadedMessages = sessionData.messages;
+            debugPrint('[ChatMessagesNotifier] Using ${loadedMessages.length} messages from markdown');
+          }
         }
+      } catch (e) {
+        debugPrint('[ChatMessagesNotifier] Server error loading session: $e');
       }
 
       if (loadedSession == null) {
-        state = state.copyWith(error: 'Session not found');
+        debugPrint('[ChatMessagesNotifier] ERROR: Session $sessionId not found');
+        state = state.copyWith(error: 'Session not found', isLoading: false);
         return;
       }
 
@@ -372,14 +378,17 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
 
       if (loadedSession.continuedFrom != null) {
         debugPrint('[ChatMessagesNotifier] Session continues from: ${loadedSession.continuedFrom}');
-        final localReader = _ref.read(localSessionReaderProvider);
-        final originalSession = await localReader.getSession(loadedSession.continuedFrom!);
-        if (originalSession != null) {
-          priorMessages = originalSession.messages;
-          continuedFromSession = originalSession.session;
-          debugPrint('[ChatMessagesNotifier] Loaded ${priorMessages.length} prior messages');
-        } else {
-          debugPrint('[ChatMessagesNotifier] Could not find original session to load prior messages');
+        try {
+          final originalSessionData = await _service.getSession(loadedSession.continuedFrom!);
+          if (originalSessionData != null) {
+            priorMessages = originalSessionData.messages;
+            continuedFromSession = originalSessionData.session;
+            debugPrint('[ChatMessagesNotifier] Loaded ${priorMessages.length} prior messages');
+          } else {
+            debugPrint('[ChatMessagesNotifier] Could not find original session to load prior messages');
+          }
+        } catch (e) {
+          debugPrint('[ChatMessagesNotifier] Error loading prior messages: $e');
         }
       }
 
@@ -1041,15 +1050,14 @@ final newChatProvider = Provider<void Function()>((ref) {
 
 /// Provider for switching to a session
 ///
-/// Set [isLocal] to true for imported or local-only sessions that don't
-/// need to check the server.
-final switchSessionProvider = Provider<Future<void> Function(String, {bool isLocal})>((ref) {
-  return (String sessionId, {bool isLocal = false}) async {
+/// All sessions are loaded from the server API.
+final switchSessionProvider = Provider<Future<void> Function(String)>((ref) {
+  return (String sessionId) async {
     // Immediately clear old messages and show loading state to prevent
     // showing stale content from previous session during async load
     ref.read(chatMessagesProvider.notifier).prepareForSessionSwitch(sessionId);
     ref.read(currentSessionIdProvider.notifier).state = sessionId;
-    await ref.read(chatMessagesProvider.notifier).loadSession(sessionId, isLocal: isLocal);
+    await ref.read(chatMessagesProvider.notifier).loadSession(sessionId);
   };
 });
 
@@ -1059,36 +1067,17 @@ final switchSessionProvider = Provider<Future<void> Function(String, {bool isLoc
 /// passing all prior messages as context for the AI.
 final continueSessionProvider = Provider<Future<void> Function(ChatSession)>((ref) {
   final service = ref.watch(chatServiceProvider);
-  final localReader = ref.watch(localSessionReaderProvider);
 
   return (ChatSession originalSession) async {
     debugPrint('[ChatProviders] continueSessionProvider called');
     debugPrint('[ChatProviders] Original session ID: ${originalSession.id}');
-    debugPrint('[ChatProviders] isLocal: ${originalSession.isLocal}, isImported: ${originalSession.isImported}');
 
     try {
-      List<ChatMessage> priorMessages = [];
-
-      // For local/imported sessions, use local reader
-      // For server sessions, try the server API
-      if (originalSession.isLocal || originalSession.isImported) {
-        debugPrint('[ChatProviders] Loading from local reader...');
-        final localSession = await localReader.getSession(originalSession.id);
-        if (localSession == null) {
-          debugPrint('[ChatProviders] WARNING: localReader.getSession returned null!');
-        } else {
-          priorMessages = localSession.messages;
-          debugPrint('[ChatProviders] Loaded ${priorMessages.length} messages from local session');
-          if (priorMessages.isNotEmpty) {
-            debugPrint('[ChatProviders] First message preview: ${priorMessages.first.textContent.substring(0, priorMessages.first.textContent.length.clamp(0, 100))}...');
-          }
-        }
-      } else {
-        debugPrint('[ChatProviders] Loading from server...');
-        final sessionData = await service.getSession(originalSession.id);
-        priorMessages = sessionData?.messages ?? [];
-        debugPrint('[ChatProviders] Loaded ${priorMessages.length} messages from server');
-      }
+      // Load prior messages from server
+      debugPrint('[ChatProviders] Loading messages from server...');
+      final sessionData = await service.getSession(originalSession.id);
+      final priorMessages = sessionData?.messages ?? [];
+      debugPrint('[ChatProviders] Loaded ${priorMessages.length} messages from server');
 
       // Clear current session and set up continuation
       ref.read(currentSessionIdProvider.notifier).state = null;

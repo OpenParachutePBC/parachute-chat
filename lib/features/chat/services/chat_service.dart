@@ -40,9 +40,10 @@ class ChatService {
   /// Pass [includeArchived: true] to get archived sessions as well.
   Future<List<ChatSession>> getSessions({bool includeArchived = false}) async {
     try {
+      // Request up to 500 sessions to handle large imports
       final uri = includeArchived
-          ? Uri.parse('$baseUrl/api/chat?archived=true')
-          : Uri.parse('$baseUrl/api/chat');
+          ? Uri.parse('$baseUrl/api/chat?archived=true&limit=500')
+          : Uri.parse('$baseUrl/api/chat?limit=500');
 
       final response = await _client.get(
         uri,
@@ -74,13 +75,17 @@ class ChatService {
 
   /// Get a specific session with messages
   Future<ChatSessionWithMessages?> getSession(String sessionId) async {
+    final url = '$baseUrl/api/chat/${Uri.encodeComponent(sessionId)}';
+    debugPrint('[ChatService] GET $url');
     try {
       final response = await _client.get(
-        Uri.parse('$baseUrl/api/chat/${Uri.encodeComponent(sessionId)}'),
+        Uri.parse(url),
         headers: {'Content-Type': 'application/json'},
       ).timeout(requestTimeout);
 
+      debugPrint('[ChatService] Response: ${response.statusCode}');
       if (response.statusCode == 404) {
+        debugPrint('[ChatService] Session not found (404)');
         return null;
       }
 
@@ -89,9 +94,10 @@ class ChatService {
       }
 
       final data = jsonDecode(response.body) as Map<String, dynamic>;
+      debugPrint('[ChatService] Parsed session: ${data['id']}, messages: ${(data['messages'] as List?)?.length ?? 0}');
       return ChatSessionWithMessages.fromJson(data);
     } catch (e) {
-      debugPrint('[ChatService] Error getting session: $e');
+      debugPrint('[ChatService] Error getting session $sessionId: $e');
       rethrow;
     }
   }
@@ -149,6 +155,47 @@ class ChatService {
       return ChatSession.fromJson(data['session'] as Map<String, dynamic>);
     } catch (e) {
       debugPrint('[ChatService] Error unarchiving session: $e');
+      rethrow;
+    }
+  }
+
+  // ============================================================
+  // Import
+  // ============================================================
+
+  /// Import conversations from Claude or ChatGPT exports
+  ///
+  /// Sends the parsed JSON to the server which:
+  /// 1. Converts conversations to SDK JSONL format
+  /// 2. Writes JSONL files to ~/.claude/projects/
+  /// 3. Creates session records in SQLite
+  ///
+  /// Returns import result with counts and session IDs.
+  Future<ImportResult> importConversations(
+    dynamic jsonData, {
+    bool archived = true,
+  }) async {
+    try {
+      debugPrint('[ChatService] Starting import...');
+      final response = await _client.post(
+        Uri.parse('$baseUrl/api/import'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'data': jsonData,
+          'archived': archived,
+        }),
+      ).timeout(const Duration(minutes: 5)); // Imports can take a while
+
+      if (response.statusCode != 200) {
+        final error = response.body;
+        throw Exception('Import failed: $error');
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      debugPrint('[ChatService] Import complete: ${data['imported_count']} imported');
+      return ImportResult.fromJson(data);
+    } catch (e) {
+      debugPrint('[ChatService] Error importing: $e');
       rethrow;
     }
   }
@@ -949,4 +996,40 @@ class VaultFileContent {
       lastModified: DateTime.parse(json['lastModified'] as String),
     );
   }
+}
+
+/// Result of importing conversations via the API
+class ImportResult {
+  final int totalConversations;
+  final int importedCount;
+  final int skippedCount;
+  final List<String> errors;
+  final List<String> sessionIds;
+
+  const ImportResult({
+    required this.totalConversations,
+    required this.importedCount,
+    required this.skippedCount,
+    required this.errors,
+    required this.sessionIds,
+  });
+
+  factory ImportResult.fromJson(Map<String, dynamic> json) {
+    return ImportResult(
+      totalConversations: json['total_conversations'] as int? ?? 0,
+      importedCount: json['imported_count'] as int? ?? 0,
+      skippedCount: json['skipped_count'] as int? ?? 0,
+      errors: (json['errors'] as List<dynamic>?)
+              ?.map((e) => e as String)
+              .toList() ??
+          [],
+      sessionIds: (json['session_ids'] as List<dynamic>?)
+              ?.map((e) => e as String)
+              .toList() ??
+          [],
+    );
+  }
+
+  bool get hasErrors => errors.isNotEmpty;
+  bool get isSuccess => importedCount > 0;
 }

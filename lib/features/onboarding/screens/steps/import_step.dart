@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:parachute_chat/core/theme/design_tokens.dart';
 import 'package:parachute_chat/core/providers/file_system_provider.dart';
 import 'package:parachute_chat/core/services/conversation_import_service.dart';
+import 'package:parachute_chat/features/chat/providers/chat_providers.dart';
 import 'package:parachute_chat/features/context/providers/context_providers.dart';
 
 /// Import step for onboarding - guides users through importing Claude history
@@ -295,8 +297,9 @@ class _ImportStepState extends ConsumerState<ImportStep> {
 
   Future<void> _scanAndImport(String exportPath, {String? cleanupPath}) async {
     final importService = ref.read(conversationImportServiceProvider);
+    final chatService = ref.read(chatServiceProvider);
 
-    // Scan
+    // Scan to get conversation count and memory info
     setState(() {
       _progressTitle = 'Analyzing export...';
       _progressValue = 0.35;
@@ -319,38 +322,50 @@ class _ImportStepState extends ConsumerState<ImportStep> {
       return;
     }
 
-    // Import conversations
+    // Import conversations via API
     setState(() {
       _progressTitle = 'Importing conversations...';
-      _progressValue = 0.4;
+      _progressValue = 0.5;
+      _totalCount = scanResult.nonEmptyCount;
     });
 
-    Stream<ImportProgress> progressStream;
-    if (_selectedSource == _ImportSource.claude) {
-      progressStream = importService.importClaudeConversations(exportPath);
-    } else {
-      progressStream = importService.importChatGPTConversations(exportPath);
-    }
-
-    await for (final progress in progressStream) {
-      setState(() {
-        _progressTitle = progress.currentTitle;
-        _processedCount = progress.processed;
-        _totalCount = progress.total;
-        _progressValue = 0.4 + (progress.progress * 0.5); // 40-90%
-      });
-
-      if (progress.hasError) {
+    try {
+      // Read the conversations.json file
+      final conversationsFile = File(p.join(exportPath, 'conversations.json'));
+      if (!await conversationsFile.exists()) {
         setState(() {
-          _error = progress.error;
+          _error = 'conversations.json not found in export';
           _phase = _ImportPhase.instructions;
         });
         return;
       }
 
-      if (progress.isComplete) {
-        _importedConversations = progress.processed;
+      final jsonString = await conversationsFile.readAsString();
+      final jsonData = jsonDecode(jsonString);
+
+      setState(() {
+        _progressTitle = 'Sending to server...';
+        _progressValue = 0.6;
+      });
+
+      // Send to API - conversations will be archived by default
+      final result = await chatService.importConversations(jsonData, archived: true);
+
+      setState(() {
+        _processedCount = result.importedCount;
+        _importedConversations = result.importedCount;
+        _progressValue = 0.9;
+      });
+
+      if (result.hasErrors) {
+        debugPrint('[ImportStep] Import had errors: ${result.errors}');
       }
+    } catch (e) {
+      setState(() {
+        _error = 'Import failed: $e';
+        _phase = _ImportPhase.instructions;
+      });
+      return;
     }
 
     // Create context files for Claude
