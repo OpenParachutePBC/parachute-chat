@@ -1648,10 +1648,11 @@ final availableContextsProvider = FutureProvider<List<ContextFile>>((ref) async 
 
 /// Provider for selected context file paths for new chats
 ///
-/// Default: ['Chat/contexts/general-context.md']
+/// Default: empty list (no pre-selected contexts)
 /// Paths are relative to vault (e.g., "Chat/contexts/work-context.md")
+/// Users can select contexts from the new chat sheet before starting.
 final selectedContextsProvider = StateProvider<List<String>>((ref) {
-  return ['Chat/contexts/general-context.md'];
+  return []; // Start with no contexts - user can select from available files
 });
 
 // ============================================================

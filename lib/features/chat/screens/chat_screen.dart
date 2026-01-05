@@ -169,9 +169,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     if (chatState.messages.isEmpty && chatState.sessionId == null) {
       contexts = ref.read(selectedContextsProvider);
       // Reset contexts after using them
-      ref.read(selectedContextsProvider.notifier).state = [
-        'Chat/contexts/general-context.md'
-      ];
+      ref.read(selectedContextsProvider.notifier).state = [];
     }
 
     ref.read(chatMessagesProvider.notifier).sendMessage(

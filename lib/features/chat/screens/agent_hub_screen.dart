@@ -590,10 +590,8 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
   }
 
   Future<void> _startNewChat(BuildContext context) async {
-    // Reset context selection to default before showing sheet
-    ref.read(selectedContextsProvider.notifier).state = [
-      'Chat/contexts/general-context.md'
-    ];
+    // Reset context selection to empty before showing sheet
+    ref.read(selectedContextsProvider.notifier).state = [];
 
     // Show the new chat sheet
     final config = await NewChatSheet.show(context);
@@ -622,10 +620,8 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
   }
 
   Future<void> _startNewChatWithPrompt(BuildContext context, String prompt) async {
-    // Reset context selection to default
-    ref.read(selectedContextsProvider.notifier).state = [
-      'Chat/contexts/general-context.md'
-    ];
+    // Reset context selection to empty
+    ref.read(selectedContextsProvider.notifier).state = [];
 
     // Show the new chat sheet
     final config = await NewChatSheet.show(context);
