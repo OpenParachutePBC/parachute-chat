@@ -1684,3 +1684,43 @@ final triggerCuratorProvider = Provider<Future<CuratorTask> Function(String)>((r
     return task;
   };
 });
+
+// ============================================================
+// Curator Activity Providers
+// ============================================================
+
+/// Provider for recent curator activity across all sessions
+///
+/// Fetches recent context file updates and title changes.
+/// Auto-refreshes every 30 seconds when watched.
+final curatorActivityProvider = FutureProvider<CuratorActivityInfo>((ref) async {
+  final service = ref.watch(chatServiceProvider);
+  try {
+    return await service.getRecentCuratorActivity(limit: 10);
+  } catch (e) {
+    debugPrint('[ChatProviders] Error fetching curator activity: $e');
+    // Return empty activity on error
+    return const CuratorActivityInfo(
+      recentUpdates: [],
+      contextFilesModified: [],
+    );
+  }
+});
+
+/// Provider for context files metadata
+///
+/// Returns structured info about each context file including
+/// fact counts, history entries, and last modified time.
+final contextFilesInfoProvider = FutureProvider<ContextFilesInfo>((ref) async {
+  final service = ref.watch(chatServiceProvider);
+  try {
+    return await service.getContextFilesInfo();
+  } catch (e) {
+    debugPrint('[ChatProviders] Error fetching context files info: $e');
+    return const ContextFilesInfo(
+      files: [],
+      totalFacts: 0,
+      totalHistoryEntries: 0,
+    );
+  }
+});

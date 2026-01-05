@@ -368,16 +368,33 @@ class _ImportStepState extends ConsumerState<ImportStep> {
       return;
     }
 
-    // Create context files for Claude
+    // Create context files for Claude using server-side Import Curator
     if (_selectedSource == _ImportSource.claude && scanResult.hasMemories) {
       setState(() {
         _progressTitle = 'Creating context files...';
         _progressValue = 0.95;
       });
 
-      final exportService = ref.read(exportDetectionServiceProvider);
-      final contextFiles = await exportService.createAllContextFilesFromClaudeExport(exportPath);
-      _importedContexts = contextFiles.length;
+      try {
+        // Use the smart Import Curator via API
+        final curateResult = await chatService.curateClaudeExport(exportPath);
+        if (curateResult.success) {
+          _importedContexts = curateResult.totalFilesAffected;
+          debugPrint('[ImportStep] Curator created ${curateResult.contextFilesCreated.length} files, updated ${curateResult.contextFilesUpdated.length} files');
+        } else {
+          // Fall back to client-side if server curator fails
+          debugPrint('[ImportStep] Server curator failed: ${curateResult.error}, falling back to client-side');
+          final exportService = ref.read(exportDetectionServiceProvider);
+          final contextFiles = await exportService.createAllContextFilesFromClaudeExport(exportPath);
+          _importedContexts = contextFiles.length;
+        }
+      } catch (e) {
+        // Fall back to client-side if API fails
+        debugPrint('[ImportStep] Curator API failed: $e, falling back to client-side');
+        final exportService = ref.read(exportDetectionServiceProvider);
+        final contextFiles = await exportService.createAllContextFilesFromClaudeExport(exportPath);
+        _importedContexts = contextFiles.length;
+      }
     }
 
     // Extract ChatGPT memory to context

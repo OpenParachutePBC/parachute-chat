@@ -189,23 +189,37 @@ class _ChatImportSectionState extends ConsumerState<ChatImportSection> {
     });
 
     try {
+      final chatService = ref.read(chatServiceProvider);
+      int filesAffected = 0;
+
+      // Try server-side Import Curator first
+      try {
+        final curateResult = await chatService.curateClaudeExport(_detectedExport!.path);
+        if (curateResult.success) {
+          filesAffected = curateResult.totalFilesAffected;
+          debugPrint('[ChatImportSection] Curator created ${curateResult.contextFilesCreated.length} files, updated ${curateResult.contextFilesUpdated.length} files');
+        }
+      } catch (e) {
+        // Fall back to client-side if API fails
+        debugPrint('[ChatImportSection] Curator API failed: $e, falling back to client-side');
+        final exportService = ref.read(exportDetectionServiceProvider);
+        final contextFiles = await exportService.createAllContextFilesFromClaudeExport(
+          _detectedExport!.path,
+        );
+        filesAffected = contextFiles.length;
+      }
+
+      // Also initialize vault with memories for AGENTS.md (legacy support)
       final exportService = ref.read(exportDetectionServiceProvider);
-
-      // Create context files (general + per-project)
-      final contextFiles = await exportService.createAllContextFilesFromClaudeExport(
-        _detectedExport!.path,
-      );
-
-      // Also initialize vault with memories for AGENTS.md
       final memoriesContext = await exportService.formatClaudeMemoriesAsContext(
         _detectedExport!.path,
       );
       await ref.read(initializeVaultWithMemoriesProvider)(memoriesContext);
 
       if (mounted) {
-        final message = contextFiles.isEmpty
+        final message = filesAffected == 0
             ? 'Vault initialized (context files already exist)'
-            : 'Created ${contextFiles.length} context file${contextFiles.length > 1 ? 's' : ''}';
+            : 'Created $filesAffected context file${filesAffected > 1 ? 's' : ''}';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(message),
