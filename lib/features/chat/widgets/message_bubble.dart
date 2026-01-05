@@ -150,18 +150,10 @@ class MessageBubble extends ConsumerWidget {
         ? Colors.white
         : (isDark ? BrandColors.nightText : BrandColors.charcoal);
 
+    // Use markdown for both user and assistant messages to support formatting
     return Padding(
       padding: Spacing.cardPadding,
-      child: isUser
-          ? SelectableText(
-              text,
-              style: TextStyle(
-                color: textColor,
-                fontSize: TypographyTokens.bodyMedium,
-                height: TypographyTokens.lineHeightNormal,
-              ),
-            )
-          : MarkdownBody(
+      child: MarkdownBody(
               data: text,
               selectable: true,
               // ignore: deprecated_member_use

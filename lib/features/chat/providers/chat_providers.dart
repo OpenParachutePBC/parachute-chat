@@ -11,6 +11,7 @@ import '../models/prompt_metadata.dart';
 import '../models/vault_entry.dart';
 import '../models/session_transcript.dart';
 import '../models/curator_session.dart';
+import '../models/attachment.dart';
 import '../services/chat_service.dart';
 import '../services/local_session_reader.dart';
 import '../services/chat_import_service.dart';
@@ -1025,16 +1026,38 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
     String? initialContext,
     String? priorConversation,
     List<String>? contexts,
+    List<ChatAttachment>? attachments,
   }) async {
     if (state.isStreaming) return;
 
     // Generate or use existing session ID
     final sessionId = state.sessionId ?? _uuid.v4();
 
+    // Build display text including attachment info
+    String displayText = message;
+    if (attachments != null && attachments.isNotEmpty) {
+      final attachmentLines = attachments.map((att) {
+        final icon = switch (att.type) {
+          AttachmentType.image => '🖼️',
+          AttachmentType.pdf => '📄',
+          AttachmentType.text => '📝',
+          AttachmentType.code => '💻',
+          AttachmentType.unknown => '📎',
+        };
+        return '$icon ${att.fileName} (${att.formattedSize})';
+      }).join('\n');
+
+      if (message.isNotEmpty) {
+        displayText = '$message\n\n**Attachments:**\n$attachmentLines';
+      } else {
+        displayText = '**Attachments:**\n$attachmentLines';
+      }
+    }
+
     // Add user message immediately
     final userMessage = ChatMessage.user(
       sessionId: sessionId,
-      text: message,
+      text: displayText,
     );
 
     // Create placeholder for assistant response
@@ -1110,6 +1133,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         continuedFrom: continuedFromId,
         workingDirectory: state.workingDirectory,
         contexts: effectiveContexts,
+        attachments: attachments,
       )) {
         // Check if session has changed (user switched chats during stream)
         // Don't break the stream - let it continue in background so server keeps processing

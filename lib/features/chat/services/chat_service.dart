@@ -11,6 +11,7 @@ import '../models/system_prompt_info.dart';
 import '../models/vault_entry.dart';
 import '../models/session_transcript.dart';
 import '../models/curator_session.dart';
+import '../models/attachment.dart';
 
 /// Service for communicating with the parachute-base backend
 ///
@@ -707,6 +708,7 @@ class ChatService {
   ///
   /// [contexts] - List of context file paths to load (e.g., ['Chat/contexts/general-context.md'])
   /// If not provided, server uses default context (general-context.md)
+  /// [attachments] - List of file attachments to include with the message
   Stream<StreamEvent> streamChat({
     required String sessionId,
     required String message,
@@ -716,6 +718,7 @@ class ChatService {
     String? continuedFrom,
     String? workingDirectory,
     List<String>? contexts,
+    List<ChatAttachment>? attachments,
   }) async* {
     debugPrint('[ChatService] Starting stream chat');
     debugPrint('[ChatService] Session: $sessionId');
@@ -741,8 +744,12 @@ class ChatService {
       if (continuedFrom != null) 'continuedFrom': continuedFrom,
       if (workingDirectory != null) 'workingDirectory': workingDirectory,
       if (contexts != null && contexts.isNotEmpty) 'contexts': contexts,
+      if (attachments != null && attachments.isNotEmpty) 'attachments': attachments.map((a) => a.toJson()).toList(),
     };
     debugPrint('[ChatService] Request body keys: ${requestBody.keys.toList()}');
+    if (attachments != null && attachments.isNotEmpty) {
+      debugPrint('[ChatService] Attachments: ${attachments.length} files');
+    }
     request.body = jsonEncode(requestBody);
 
     // Timeouts for streaming requests

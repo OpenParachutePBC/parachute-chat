@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute_chat/core/theme/design_tokens.dart';
 import 'package:parachute_chat/core/widgets/error_boundary.dart';
 import 'package:parachute_chat/core/services/logger_service.dart';
+import '../models/attachment.dart';
 import '../models/chat_session.dart';
 import '../providers/chat_providers.dart';
 import '../widgets/message_bubble.dart';
@@ -97,7 +98,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   void _performAutoRun() {
     if (_hasAutoRun) return;
     _hasAutoRun = true;
-    _handleSend(widget.autoRunMessage!);
+    _handleSend(widget.autoRunMessage!, []);
   }
 
   @override
@@ -159,7 +160,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     });
   }
 
-  void _handleSend(String message) {
+  void _handleSend(String message, [List<ChatAttachment>? attachments]) {
     // Get selected contexts for first message only
     final chatState = ref.read(chatMessagesProvider);
     List<String>? contexts;
@@ -177,6 +178,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           message: message,
           initialContext: _pendingInitialContext,
           contexts: contexts,
+          attachments: attachments,
         );
 
     // Clear pending context after first message
@@ -763,11 +765,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               children: [
                 _SuggestionChip(
                   label: 'Summarize my recent notes',
-                  onTap: () => _handleSend('Summarize my recent notes'),
+                  onTap: () => _handleSend('Summarize my recent notes', []),
                 ),
                 _SuggestionChip(
                   label: 'What did I capture today?',
-                  onTap: () => _handleSend('What did I capture today?'),
+                  onTap: () => _handleSend('What did I capture today?', []),
                 ),
               ],
             ),
