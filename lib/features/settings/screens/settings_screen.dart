@@ -12,6 +12,7 @@ import '../widgets/system_prompt_section.dart';
 import '../widgets/mcp_section.dart';
 import '../widgets/skills_section.dart';
 import '../widgets/server_management_section.dart';
+import '../widgets/context_dashboard_section.dart';
 
 /// Settings screen with expandable sections
 ///
@@ -87,6 +88,7 @@ class SettingsScreen extends ConsumerWidget {
         if (aiChatEnabled) ...[
           const ServerManagementSection(),
           const SystemPromptSection(),
+          const ContextDashboardSection(),
           const McpSection(),
           const SkillsSection(),
           const ChatImportSection(),
