@@ -7,6 +7,7 @@ import '../models/chat_message.dart';
 import '../models/context_file.dart';
 import '../models/stream_event.dart';
 import '../models/session_resume_info.dart';
+import '../models/prompt_metadata.dart';
 import '../models/vault_entry.dart';
 import '../models/session_transcript.dart';
 import '../services/chat_service.dart';
@@ -147,7 +148,7 @@ class ChatMessagesState {
 
   /// Working directory for this session (relative to vault)
   /// If set, the agent operates in this directory and loads its CLAUDE.md
-  /// Default is 'Chat' for the standard thinking-oriented experience
+  /// Default is null, which means the vault root (~/Parachute)
   final String? workingDirectory;
 
   /// If this is a continuation, the original session being continued
@@ -175,11 +176,24 @@ class ChatMessagesState {
   /// Set when receiving model event from backend
   final String? model;
 
+  /// Metadata about the system prompt composition (for transparency)
+  /// Set when receiving prompt_metadata event from backend
+  final PromptMetadata? promptMetadata;
+
   /// Transcript segments for lazy loading (metadata only for unloaded segments)
   final List<TranscriptSegment> transcriptSegments;
 
   /// Total number of transcript segments
   final int transcriptSegmentCount;
+
+  /// Selected context files for this session
+  /// These are passed to the server with each message
+  /// Paths are relative to vault (e.g., "Chat/contexts/general-context.md")
+  final List<String> selectedContexts;
+
+  /// Whether to reload the working directory CLAUDE.md on next message
+  /// Set to true when user wants to refresh project context
+  final bool reloadClaudeMd;
 
   const ChatMessagesState({
     this.messages = const [],
@@ -195,8 +209,11 @@ class ChatMessagesState {
     this.sessionResumeInfo,
     this.sessionUnavailable,
     this.model,
+    this.promptMetadata,
     this.transcriptSegments = const [],
     this.transcriptSegmentCount = 0,
+    this.selectedContexts = const [],
+    this.reloadClaudeMd = false,
   });
 
   /// Whether this session is continuing from another
@@ -225,8 +242,11 @@ class ChatMessagesState {
     SessionResumeInfo? sessionResumeInfo,
     SessionUnavailableInfo? sessionUnavailable,
     String? model,
+    PromptMetadata? promptMetadata,
     List<TranscriptSegment>? transcriptSegments,
     int? transcriptSegmentCount,
+    List<String>? selectedContexts,
+    bool? reloadClaudeMd,
     bool clearSessionUnavailable = false,
     bool clearWorkingDirectory = false,
     bool clearViewingSession = false,
@@ -243,10 +263,13 @@ class ChatMessagesState {
       priorMessages: priorMessages ?? this.priorMessages,
       viewingSession: clearViewingSession ? null : (viewingSession ?? this.viewingSession),
       model: model ?? this.model,
+      promptMetadata: promptMetadata ?? this.promptMetadata,
       sessionResumeInfo: sessionResumeInfo ?? this.sessionResumeInfo,
       sessionUnavailable: clearSessionUnavailable ? null : (sessionUnavailable ?? this.sessionUnavailable),
       transcriptSegments: transcriptSegments ?? this.transcriptSegments,
       transcriptSegmentCount: transcriptSegmentCount ?? this.transcriptSegmentCount,
+      selectedContexts: selectedContexts ?? this.selectedContexts,
+      reloadClaudeMd: reloadClaudeMd ?? this.reloadClaudeMd,
     );
   }
 }
@@ -686,6 +709,24 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         }
         break;
 
+      case StreamEventType.promptMetadata:
+        // Prompt composition metadata for transparency
+        final metadata = PromptMetadata(
+          promptSource: event.promptSource ?? 'default',
+          promptSourcePath: event.promptSourcePath,
+          contextFiles: event.contextFiles,
+          contextTokens: event.contextTokens,
+          contextTruncated: event.contextTruncated,
+          agentName: event.agentName,
+          availableAgents: event.availableAgents,
+          basePromptTokens: event.basePromptTokens,
+          totalPromptTokens: event.totalPromptTokens,
+          trustMode: event.trustMode,
+        );
+        debugPrint('[ChatMessagesNotifier] Join stream prompt metadata: ${metadata.promptSource}');
+        state = state.copyWith(promptMetadata: metadata);
+        break;
+
       case StreamEventType.text:
         // Text content from server - accumulate it
         final content = event.textContent;
@@ -876,6 +917,40 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
     );
   }
 
+  /// Update the selected context files for this session
+  ///
+  /// Changes take effect on the next message sent.
+  /// [contexts] are paths relative to vault (e.g., "Chat/contexts/work-context.md")
+  void setSelectedContexts(List<String> contexts) {
+    state = state.copyWith(selectedContexts: contexts);
+  }
+
+  /// Toggle a specific context file on or off
+  void toggleContext(String contextPath) {
+    final current = List<String>.from(state.selectedContexts);
+    if (current.contains(contextPath)) {
+      current.remove(contextPath);
+    } else {
+      current.add(contextPath);
+    }
+    state = state.copyWith(selectedContexts: current);
+  }
+
+  /// Mark that CLAUDE.md should be reloaded on the next message
+  ///
+  /// This is useful when the working directory's CLAUDE.md has been updated
+  /// and the user wants to incorporate the changes without starting a new session.
+  void markClaudeMdForReload() {
+    state = state.copyWith(reloadClaudeMd: true);
+  }
+
+  /// Clear the reload CLAUDE.md flag (called after sending a message)
+  void _clearReloadClaudeMdFlag() {
+    if (state.reloadClaudeMd) {
+      state = state.copyWith(reloadClaudeMd: false);
+    }
+  }
+
   /// Set up a continuation from an existing session
   ///
   /// This prepares the chat state to continue from an imported or prior session.
@@ -1010,6 +1085,21 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         debugPrint('[ChatMessagesNotifier] continuedFromSession.id: ${state.continuedFromSession?.id}');
       }
 
+      // Use provided contexts, or fall back to session's selected contexts
+      // This allows mid-session context changes to take effect
+      final effectiveContexts = contexts ??
+          (state.selectedContexts.isNotEmpty ? state.selectedContexts : null);
+      debugPrint('[ChatMessagesNotifier] Using contexts: $effectiveContexts');
+
+      // Clear the reload flag after capturing it (will be cleared on successful send)
+      final shouldReloadClaudeMd = state.reloadClaudeMd;
+      if (shouldReloadClaudeMd) {
+        debugPrint('[ChatMessagesNotifier] Reload CLAUDE.md flag is set');
+        // Note: Server doesn't yet support a reload flag, but contexts are re-loaded each message
+        // The CLAUDE.md is always read fresh from disk on each message
+      }
+      _clearReloadClaudeMdFlag();
+
       await for (final event in _service.streamChat(
         sessionId: sessionId,
         message: message,
@@ -1018,7 +1108,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         priorConversation: effectivePriorConversation,
         continuedFrom: continuedFromId,
         workingDirectory: state.workingDirectory,
-        contexts: contexts,
+        contexts: effectiveContexts,
       )) {
         // Check if session has changed (user switched chats during stream)
         // Don't break the stream - let it continue in background so server keeps processing
@@ -1068,6 +1158,25 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
               debugPrint('[ChatMessagesNotifier] Using model: $model');
               state = state.copyWith(model: model);
             }
+            break;
+
+          case StreamEventType.promptMetadata:
+            // Prompt composition metadata for transparency
+            final metadata = PromptMetadata(
+              promptSource: event.promptSource ?? 'default',
+              promptSourcePath: event.promptSourcePath,
+              contextFiles: event.contextFiles,
+              contextTokens: event.contextTokens,
+              contextTruncated: event.contextTruncated,
+              agentName: event.agentName,
+              availableAgents: event.availableAgents,
+              basePromptTokens: event.basePromptTokens,
+              totalPromptTokens: event.totalPromptTokens,
+              trustMode: event.trustMode,
+            );
+            debugPrint('[ChatMessagesNotifier] Prompt metadata: ${metadata.promptSource} '
+                '(${metadata.totalPromptTokens} tokens, ${metadata.contextFiles.length} context files)');
+            state = state.copyWith(promptMetadata: metadata);
             break;
 
           case StreamEventType.text:

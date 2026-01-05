@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import '../models/chat_session.dart';
 import '../models/chat_message.dart';
 import '../models/context_file.dart';
+import '../models/prompt_metadata.dart';
 import '../models/stream_event.dart';
 import '../models/system_prompt_info.dart';
 import '../models/vault_entry.dart';
@@ -492,6 +493,52 @@ class ChatService {
 
   Future<void> saveAgentsMd(String content) async {
     await saveModulePrompt(content);
+  }
+
+  // ============================================================
+  // Prompt Preview (Transparency)
+  // ============================================================
+
+  /// Preview the full system prompt that would be used for a chat
+  ///
+  /// This allows users to see exactly what context and instructions
+  /// are being provided to the AI, supporting transparency.
+  Future<PromptPreviewResult> getPromptPreview({
+    String? workingDirectory,
+    String? agentPath,
+    List<String>? contexts,
+  }) async {
+    try {
+      final queryParams = <String, String>{};
+      if (workingDirectory != null) {
+        queryParams['workingDirectory'] = workingDirectory;
+      }
+      if (agentPath != null) {
+        queryParams['agentPath'] = agentPath;
+      }
+      if (contexts != null && contexts.isNotEmpty) {
+        queryParams['contexts'] = contexts.join(',');
+      }
+
+      final uri = Uri.parse('$baseUrl/api/prompt/preview').replace(
+        queryParameters: queryParams.isNotEmpty ? queryParams : null,
+      );
+
+      final response = await _client.get(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+      ).timeout(requestTimeout);
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to get prompt preview: ${response.statusCode}');
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return PromptPreviewResult.fromJson(data);
+    } catch (e) {
+      debugPrint('[ChatService] Error getting prompt preview: $e');
+      rethrow;
+    }
   }
 
   // ============================================================

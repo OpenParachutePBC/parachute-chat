@@ -265,7 +265,7 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
             const SizedBox(width: Spacing.sm),
             Expanded(
               child: Text(
-                hasDirectory ? _workingDirectory! : 'Default (Chat folder)',
+                hasDirectory ? _workingDirectory! : 'Default (Vault root)',
                 style: TextStyle(
                   fontSize: TypographyTokens.bodyMedium,
                   color: hasDirectory

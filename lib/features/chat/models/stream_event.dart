@@ -5,6 +5,7 @@ import 'session_resume_info.dart';
 /// Type of SSE stream event from the agent backend
 enum StreamEventType {
   session,
+  promptMetadata, // Prompt composition details for transparency
   init,
   model, // Model being used (emitted when first assistant message received)
   text,
@@ -49,6 +50,9 @@ class StreamEvent {
       switch (typeStr) {
         case 'session':
           type = StreamEventType.session;
+          break;
+        case 'prompt_metadata':
+          type = StreamEventType.promptMetadata;
           break;
         case 'init':
           type = StreamEventType.init;
@@ -155,4 +159,38 @@ class StreamEvent {
 
   /// User-friendly message explaining the situation
   String? get unavailableMessage => data['message'] as String?;
+
+  // Prompt metadata event accessors
+
+  /// Get prompt source from prompt_metadata event ('default', 'module', 'agent', 'custom')
+  String? get promptSource => data['promptSource'] as String?;
+
+  /// Get prompt source path from prompt_metadata event (e.g., 'Chat/CLAUDE.md')
+  String? get promptSourcePath => data['promptSourcePath'] as String?;
+
+  /// Get list of context files loaded
+  List<String> get contextFiles =>
+      (data['contextFiles'] as List<dynamic>?)?.cast<String>() ?? [];
+
+  /// Get estimated tokens from context files
+  int get contextTokens => data['contextTokens'] as int? ?? 0;
+
+  /// Whether context was truncated due to token limit
+  bool get contextTruncated => data['contextTruncated'] as bool? ?? false;
+
+  /// Get agent name from prompt_metadata event
+  String? get agentName => data['agentName'] as String?;
+
+  /// Get list of available specialized agents
+  List<String> get availableAgents =>
+      (data['availableAgents'] as List<dynamic>?)?.cast<String>() ?? [];
+
+  /// Get estimated tokens in base prompt
+  int get basePromptTokens => data['basePromptTokens'] as int? ?? 0;
+
+  /// Get total estimated tokens in system prompt
+  int get totalPromptTokens => data['totalPromptTokens'] as int? ?? 0;
+
+  /// Whether trust mode is enabled for this session
+  bool get trustMode => data['trustMode'] as bool? ?? true;
 }

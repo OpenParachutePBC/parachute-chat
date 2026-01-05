@@ -12,6 +12,8 @@ import '../widgets/connection_status_banner.dart';
 import '../widgets/resume_marker.dart';
 import '../widgets/session_resume_banner.dart';
 import '../widgets/directory_picker.dart';
+import '../widgets/session_info_sheet.dart';
+import '../widgets/context_settings_sheet.dart';
 import '../../settings/screens/settings_screen.dart';
 
 /// Main chat screen for AI conversations
@@ -379,6 +381,27 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     ),
                   ),
                 ),
+              ),
+            // Context settings button (toggle context files, reload CLAUDE.md)
+            IconButton(
+              onPressed: () => _showContextSettingsSheet(context),
+              icon: Icon(
+                Icons.tune,
+                size: 20,
+                color: isDark ? BrandColors.nightTextSecondary : BrandColors.charcoal,
+              ),
+              tooltip: 'Context settings',
+            ),
+            // Session info button (shows prompt metadata and session details)
+            if (chatState.sessionId != null || chatState.promptMetadata != null)
+              IconButton(
+                onPressed: () => _showSessionInfoSheet(context),
+                icon: Icon(
+                  Icons.info_outline,
+                  size: 20,
+                  color: isDark ? BrandColors.nightTextSecondary : BrandColors.charcoal,
+                ),
+                tooltip: 'Session info',
               ),
             const SizedBox(width: Spacing.xs),
           ],
@@ -937,6 +960,35 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       return const Color(0xFF14B8A6); // Teal for Haiku
     }
     return BrandColors.forest; // Default
+  }
+
+  /// Show the session info sheet with prompt metadata
+  void _showSessionInfoSheet(BuildContext context) {
+    final chatState = ref.read(chatMessagesProvider);
+    SessionInfoSheet.show(
+      context,
+      sessionId: chatState.sessionId,
+      model: chatState.model,
+      workingDirectory: chatState.workingDirectory,
+      promptMetadata: chatState.promptMetadata,
+    );
+  }
+
+  /// Show context settings sheet for mid-session context management
+  void _showContextSettingsSheet(BuildContext context) {
+    final chatState = ref.read(chatMessagesProvider);
+    ContextSettingsSheet.show(
+      context,
+      workingDirectory: chatState.workingDirectory,
+      promptMetadata: chatState.promptMetadata,
+      selectedContexts: chatState.selectedContexts,
+      onContextsChanged: (contexts) {
+        ref.read(chatMessagesProvider.notifier).setSelectedContexts(contexts);
+      },
+      onReloadClaudeMd: () {
+        ref.read(chatMessagesProvider.notifier).markClaudeMdForReload();
+      },
+    );
   }
 
   /// Resume an archived session - unarchive and enable input
