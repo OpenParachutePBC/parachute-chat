@@ -8,6 +8,9 @@ enum AttachmentType {
   pdf,
   text,
   code,
+  archive,
+  audio,
+  video,
   unknown,
 }
 
@@ -49,7 +52,35 @@ AttachmentType getAttachmentType(String path) {
     case 'sql':
     case 'sh':
     case 'bash':
+    case 'toml':
+    case 'ini':
+    case 'env':
+    case 'gitignore':
+    case 'dockerfile':
       return AttachmentType.code;
+    case 'zip':
+    case 'tar':
+    case 'gz':
+    case 'tgz':
+    case 'rar':
+    case '7z':
+    case 'bz2':
+    case 'xz':
+      return AttachmentType.archive;
+    case 'mp3':
+    case 'wav':
+    case 'ogg':
+    case 'opus':
+    case 'm4a':
+    case 'flac':
+    case 'aac':
+      return AttachmentType.audio;
+    case 'mp4':
+    case 'mov':
+    case 'avi':
+    case 'mkv':
+    case 'webm':
+      return AttachmentType.video;
     default:
       return AttachmentType.unknown;
   }
@@ -142,15 +173,9 @@ class ChatAttachment {
     final bytes = await file.readAsBytes();
     final sizeBytes = bytes.length;
 
-    String? base64Data;
     String? textPreview;
 
-    // For images and PDFs, encode as base64
-    if (type == AttachmentType.image || type == AttachmentType.pdf) {
-      base64Data = base64Encode(bytes);
-    }
-
-    // For text/code files, read content
+    // For text/code files, try to read content for preview
     if (type == AttachmentType.text || type == AttachmentType.code) {
       try {
         final content = await file.readAsString();
@@ -158,13 +183,13 @@ class ChatAttachment {
         textPreview = content.length > 500
             ? '${content.substring(0, 500)}...'
             : content;
-        // Still encode as base64 for API
-        base64Data = base64Encode(bytes);
-      } catch (e) {
-        // If we can't read as string, treat as binary
-        base64Data = base64Encode(bytes);
+      } catch (_) {
+        // If we can't read as string, that's fine - no preview
       }
     }
+
+    // Always encode as base64 - let the agent figure out what to do with it
+    final base64Data = base64Encode(bytes);
 
     return ChatAttachment(
       id: DateTime.now().millisecondsSinceEpoch.toString(),

@@ -99,17 +99,7 @@ class _ChatInputState extends ConsumerState<ChatInput>
 
     try {
       final result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: [
-          // Images
-          'jpg', 'jpeg', 'png', 'gif', 'webp',
-          // Documents
-          'pdf', 'txt', 'md',
-          // Code files
-          'dart', 'py', 'js', 'ts', 'java', 'kt', 'swift', 'go', 'rs',
-          'c', 'cpp', 'h', 'hpp', 'json', 'yaml', 'yml', 'xml', 'html',
-          'css', 'sql', 'sh',
-        ],
+        type: FileType.any, // Allow any file type - agent can figure out how to handle it
         allowMultiple: true,
         withData: true, // Get bytes directly on mobile
       );
@@ -669,6 +659,18 @@ class _ChatInputState extends ConsumerState<ChatInput>
         break;
       case AttachmentType.code:
         icon = Icons.code_rounded;
+        color = BrandColors.warning;
+        break;
+      case AttachmentType.archive:
+        icon = Icons.folder_zip_rounded;
+        color = BrandColors.turquoise;
+        break;
+      case AttachmentType.audio:
+        icon = Icons.audio_file_rounded;
+        color = BrandColors.forest;
+        break;
+      case AttachmentType.video:
+        icon = Icons.video_file_rounded;
         color = BrandColors.warning;
         break;
       case AttachmentType.unknown:

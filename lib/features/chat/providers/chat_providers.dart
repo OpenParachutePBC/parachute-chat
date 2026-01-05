@@ -1042,6 +1042,9 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
           AttachmentType.pdf => '📄',
           AttachmentType.text => '📝',
           AttachmentType.code => '💻',
+          AttachmentType.archive => '📦',
+          AttachmentType.audio => '🎵',
+          AttachmentType.video => '🎬',
           AttachmentType.unknown => '📎',
         };
         return '$icon ${att.fileName} (${att.formattedSize})';
