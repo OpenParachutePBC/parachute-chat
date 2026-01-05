@@ -10,6 +10,7 @@ import '../models/session_resume_info.dart';
 import '../models/prompt_metadata.dart';
 import '../models/vault_entry.dart';
 import '../models/session_transcript.dart';
+import '../models/curator_session.dart';
 import '../services/chat_service.dart';
 import '../services/local_session_reader.dart';
 import '../services/chat_import_service.dart';
@@ -1624,4 +1625,34 @@ final availableContextsProvider = FutureProvider<List<ContextFile>>((ref) async 
 /// Paths are relative to vault (e.g., "Chat/contexts/work-context.md")
 final selectedContextsProvider = StateProvider<List<String>>((ref) {
   return ['Chat/contexts/general-context.md'];
+});
+
+// ============================================================
+// Curator Session
+// ============================================================
+
+/// Provider for curator info for a specific session
+///
+/// Fetches curator session data and recent task history.
+/// Use with .family to specify the session ID:
+/// - ref.watch(curatorInfoProvider(sessionId))
+final curatorInfoProvider = FutureProvider.family<CuratorInfo, String>((ref, sessionId) async {
+  final service = ref.watch(chatServiceProvider);
+  return service.getCuratorInfo(sessionId);
+});
+
+/// Provider for manually triggering a curator run
+///
+/// Returns a function that triggers the curator for a session.
+/// Usage: await ref.read(triggerCuratorProvider)(sessionId);
+final triggerCuratorProvider = Provider<Future<CuratorTask> Function(String)>((ref) {
+  final service = ref.watch(chatServiceProvider);
+  return (String sessionId) async {
+    final task = await service.triggerCurator(sessionId);
+    // Invalidate the curator info to refresh the task list
+    ref.invalidate(curatorInfoProvider(sessionId));
+    // Also refresh sessions list in case title was updated
+    ref.invalidate(chatSessionsProvider);
+    return task;
+  };
 });

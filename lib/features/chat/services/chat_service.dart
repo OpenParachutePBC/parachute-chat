@@ -10,6 +10,7 @@ import '../models/stream_event.dart';
 import '../models/system_prompt_info.dart';
 import '../models/vault_entry.dart';
 import '../models/session_transcript.dart';
+import '../models/curator_session.dart';
 
 /// Service for communicating with the parachute-base backend
 ///
@@ -825,6 +826,86 @@ class ChatService {
         type: StreamEventType.error,
         data: {'error': e.toString()},
       );
+    }
+  }
+
+  // ============================================================
+  // Curator Session API
+  // ============================================================
+
+  /// Get curator info for a chat session
+  ///
+  /// Returns the curator session and recent task history.
+  /// The curator automatically runs after each message to maintain
+  /// session titles and update context files.
+  Future<CuratorInfo> getCuratorInfo(String sessionId) async {
+    try {
+      final response = await _client.get(
+        Uri.parse('$baseUrl/api/curator/${Uri.encodeComponent(sessionId)}'),
+        headers: {'Content-Type': 'application/json'},
+      ).timeout(requestTimeout);
+
+      if (response.statusCode == 404) {
+        // No curator session exists yet
+        return const CuratorInfo();
+      }
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to get curator info: ${response.statusCode}');
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return CuratorInfo.fromJson(data);
+    } catch (e) {
+      debugPrint('[ChatService] Error getting curator info: $e');
+      rethrow;
+    }
+  }
+
+  /// Manually trigger a curator run for a session
+  ///
+  /// Useful for testing or forcing an update. The curator will
+  /// evaluate the conversation and update title/context as needed.
+  Future<CuratorTask> triggerCurator(String sessionId) async {
+    try {
+      final response = await _client.post(
+        Uri.parse('$baseUrl/api/curator/${Uri.encodeComponent(sessionId)}/trigger'),
+        headers: {'Content-Type': 'application/json'},
+      ).timeout(requestTimeout);
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to trigger curator: ${response.statusCode}');
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return CuratorTask.fromJson(data['task'] as Map<String, dynamic>);
+    } catch (e) {
+      debugPrint('[ChatService] Error triggering curator: $e');
+      rethrow;
+    }
+  }
+
+  /// Get details of a specific curator task
+  Future<CuratorTask?> getCuratorTask(int taskId) async {
+    try {
+      final response = await _client.get(
+        Uri.parse('$baseUrl/api/curator/task/$taskId'),
+        headers: {'Content-Type': 'application/json'},
+      ).timeout(requestTimeout);
+
+      if (response.statusCode == 404) {
+        return null;
+      }
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to get curator task: ${response.statusCode}');
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return CuratorTask.fromJson(data['task'] as Map<String, dynamic>);
+    } catch (e) {
+      debugPrint('[ChatService] Error getting curator task: $e');
+      rethrow;
     }
   }
 

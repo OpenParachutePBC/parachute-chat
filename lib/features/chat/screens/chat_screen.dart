@@ -14,6 +14,7 @@ import '../widgets/session_resume_banner.dart';
 import '../widgets/directory_picker.dart';
 import '../widgets/session_info_sheet.dart';
 import '../widgets/context_settings_sheet.dart';
+import '../widgets/curator_session_viewer_sheet.dart';
 import '../../settings/screens/settings_screen.dart';
 
 /// Main chat screen for AI conversations
@@ -402,6 +403,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   color: isDark ? BrandColors.nightTextSecondary : BrandColors.charcoal,
                 ),
                 tooltip: 'Session info',
+              ),
+            // Curator activity button (shows background curator status)
+            if (chatState.sessionId != null)
+              IconButton(
+                onPressed: () => _showCuratorSheet(context),
+                icon: Icon(
+                  Icons.auto_fix_high,
+                  size: 20,
+                  color: isDark ? BrandColors.nightTextSecondary : BrandColors.charcoal,
+                ),
+                tooltip: 'Curator activity',
               ),
             const SizedBox(width: Spacing.xs),
           ],
@@ -989,6 +1001,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         ref.read(chatMessagesProvider.notifier).markClaudeMdForReload();
       },
     );
+  }
+
+  /// Show curator session viewer sheet
+  void _showCuratorSheet(BuildContext context) {
+    final chatState = ref.read(chatMessagesProvider);
+    if (chatState.sessionId != null) {
+      CuratorSessionViewerSheet.show(context, chatState.sessionId!);
+    }
   }
 
   /// Resume an archived session - unarchive and enable input
