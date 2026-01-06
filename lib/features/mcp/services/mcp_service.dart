@@ -15,6 +15,12 @@ class McpService {
 
   static const Duration requestTimeout = Duration(seconds: 30);
 
+  /// Standard headers for all requests - identifies this as a Parachute app
+  static const Map<String, String> _defaultHeaders = {
+    'Content-Type': 'application/json',
+    'User-Agent': 'Parachute-Chat/1.0',
+  };
+
   McpService({required this.baseUrl}) : _client = http.Client();
 
   /// List all configured MCP servers
@@ -23,7 +29,7 @@ class McpService {
       final response = await _client
           .get(
             Uri.parse('$baseUrl/api/mcps'),
-            headers: {'Content-Type': 'application/json'},
+            headers: _defaultHeaders,
           )
           .timeout(requestTimeout);
 
@@ -48,7 +54,7 @@ class McpService {
       final response = await _client
           .get(
             Uri.parse('$baseUrl/api/mcps/$name'),
-            headers: {'Content-Type': 'application/json'},
+            headers: _defaultHeaders,
           )
           .timeout(requestTimeout);
 
@@ -77,7 +83,7 @@ class McpService {
       final response = await _client
           .post(
             Uri.parse('$baseUrl/api/mcps'),
-            headers: {'Content-Type': 'application/json'},
+            headers: _defaultHeaders,
             body: jsonEncode({
               'name': name,
               'config': config,
@@ -139,7 +145,7 @@ class McpService {
       final response = await _client
           .delete(
             Uri.parse('$baseUrl/api/mcps/$name'),
-            headers: {'Content-Type': 'application/json'},
+            headers: _defaultHeaders,
           )
           .timeout(requestTimeout);
 
@@ -163,7 +169,7 @@ class McpService {
       final response = await _client
           .post(
             Uri.parse('$baseUrl/api/mcps/$name/test'),
-            headers: {'Content-Type': 'application/json'},
+            headers: _defaultHeaders,
           )
           .timeout(const Duration(seconds: 10)); // Longer timeout for test
 
@@ -194,7 +200,7 @@ class McpService {
       final response = await _client
           .get(
             Uri.parse('$baseUrl/api/mcps/$name/tools'),
-            headers: {'Content-Type': 'application/json'},
+            headers: _defaultHeaders,
           )
           .timeout(const Duration(seconds: 15)); // Longer timeout for tools query
 
@@ -230,7 +236,7 @@ class McpService {
       final response = await _client
           .get(
             Uri.parse('$baseUrl/api/mcps/$name/oauth/status'),
-            headers: {'Content-Type': 'application/json'},
+            headers: _defaultHeaders,
           )
           .timeout(requestTimeout);
 
@@ -258,7 +264,7 @@ class McpService {
       final response = await _client
           .post(
             Uri.parse('$baseUrl/api/mcps/$name/oauth/start'),
-            headers: {'Content-Type': 'application/json'},
+            headers: _defaultHeaders,
             body: jsonEncode({
               'redirect_uri': redirectUri,
               if (scopes != null) 'scopes': scopes,
@@ -289,7 +295,7 @@ class McpService {
       final response = await _client
           .post(
             Uri.parse('$baseUrl/api/mcps/$name/oauth/callback'),
-            headers: {'Content-Type': 'application/json'},
+            headers: _defaultHeaders,
             body: jsonEncode({
               'code': code,
               'state': state,
@@ -321,7 +327,7 @@ class McpService {
       final response = await _client
           .post(
             Uri.parse('$baseUrl/api/mcps/$name/oauth/token'),
-            headers: {'Content-Type': 'application/json'},
+            headers: _defaultHeaders,
             body: jsonEncode({
               'token': token,
               'token_type': tokenType,
@@ -348,7 +354,7 @@ class McpService {
       final response = await _client
           .delete(
             Uri.parse('$baseUrl/api/mcps/$name/oauth/logout'),
-            headers: {'Content-Type': 'application/json'},
+            headers: _defaultHeaders,
           )
           .timeout(requestTimeout);
 

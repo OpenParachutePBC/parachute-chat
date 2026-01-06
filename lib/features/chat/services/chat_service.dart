@@ -31,6 +31,12 @@ class ChatService {
   /// Timeout for non-streaming HTTP requests
   static const requestTimeout = Duration(seconds: 30);
 
+  /// Standard headers for all requests - identifies this as a Parachute app
+  static const Map<String, String> _defaultHeaders = {
+    'Content-Type': 'application/json',
+    'User-Agent': 'Parachute-Chat/1.0',
+  };
+
   ChatService({required this.baseUrl}) : _client = http.Client();
 
   // ============================================================
@@ -50,7 +56,7 @@ class ChatService {
 
       final response = await _client.get(
         uri,
-        headers: {'Content-Type': 'application/json'},
+        headers: _defaultHeaders,
       ).timeout(requestTimeout);
 
       if (response.statusCode != 200) {
@@ -83,7 +89,7 @@ class ChatService {
     try {
       final response = await _client.get(
         Uri.parse(url),
-        headers: {'Content-Type': 'application/json'},
+        headers: _defaultHeaders,
       ).timeout(requestTimeout);
 
       debugPrint('[ChatService] Response: ${response.statusCode}');
@@ -110,7 +116,7 @@ class ChatService {
     try {
       final response = await _client.delete(
         Uri.parse('$baseUrl/api/chat/${Uri.encodeComponent(sessionId)}'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _defaultHeaders,
       ).timeout(requestTimeout);
 
       if (response.statusCode != 200) {
@@ -127,7 +133,7 @@ class ChatService {
     try {
       final response = await _client.post(
         Uri.parse('$baseUrl/api/chat/${Uri.encodeComponent(sessionId)}/archive'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _defaultHeaders,
       ).timeout(requestTimeout);
 
       if (response.statusCode != 200) {
@@ -147,7 +153,7 @@ class ChatService {
     try {
       final response = await _client.post(
         Uri.parse('$baseUrl/api/chat/${Uri.encodeComponent(sessionId)}/unarchive'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _defaultHeaders,
       ).timeout(requestTimeout);
 
       if (response.statusCode != 200) {
@@ -182,7 +188,7 @@ class ChatService {
       debugPrint('[ChatService] Starting import...');
       final response = await _client.post(
         Uri.parse('$baseUrl/api/import'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _defaultHeaders,
         body: jsonEncode({
           'data': jsonData,
           'archived': archived,
@@ -215,7 +221,7 @@ class ChatService {
       debugPrint('[ChatService] Curating Claude export at: $exportPath');
       final response = await _client.post(
         Uri.parse('$baseUrl/api/import/curate'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _defaultHeaders,
         body: jsonEncode({'export_path': exportPath}),
       ).timeout(const Duration(minutes: 2));
 
@@ -241,7 +247,7 @@ class ChatService {
     try {
       final response = await _client.get(
         Uri.parse('$baseUrl/api/import/contexts'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _defaultHeaders,
       ).timeout(requestTimeout);
 
       if (response.statusCode != 200) {
@@ -264,7 +270,7 @@ class ChatService {
     try {
       final response = await _client.get(
         Uri.parse('$baseUrl/api/curator/activity/recent?limit=$limit'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _defaultHeaders,
       ).timeout(requestTimeout);
 
       if (response.statusCode != 200) {
@@ -285,7 +291,7 @@ class ChatService {
     try {
       final response = await _client.post(
         Uri.parse('$baseUrl/api/chat/${Uri.encodeComponent(sessionId)}/abort'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _defaultHeaders,
       ).timeout(const Duration(seconds: 5));
 
       if (response.statusCode == 200) {
@@ -312,7 +318,7 @@ class ChatService {
     try {
       final response = await _client.get(
         Uri.parse('$baseUrl/api/chat/${Uri.encodeComponent(sessionId)}/stream-status'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _defaultHeaders,
       ).timeout(const Duration(seconds: 5));
 
       if (response.statusCode == 200) {
@@ -335,7 +341,7 @@ class ChatService {
     try {
       final response = await _client.get(
         Uri.parse('$baseUrl/api/chat/active-streams'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _defaultHeaders,
       ).timeout(const Duration(seconds: 5));
 
       if (response.statusCode == 200) {
@@ -482,7 +488,7 @@ class ChatService {
 
       final response = await _client.get(
         uri,
-        headers: {'Content-Type': 'application/json'},
+        headers: _defaultHeaders,
       ).timeout(const Duration(seconds: 60)); // Transcripts can be large
 
       if (response.statusCode == 404) {
@@ -516,7 +522,7 @@ class ChatService {
     try {
       final response = await _client.get(
         Uri.parse('$baseUrl/api/modules/$module/prompt'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _defaultHeaders,
       ).timeout(requestTimeout);
 
       if (response.statusCode != 200) {
@@ -539,7 +545,7 @@ class ChatService {
     try {
       final response = await _client.put(
         Uri.parse('$baseUrl/api/modules/$module/prompt'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _defaultHeaders,
         body: jsonEncode({'content': content}),
       ).timeout(requestTimeout);
 
@@ -604,7 +610,7 @@ class ChatService {
 
       final response = await _client.get(
         uri,
-        headers: {'Content-Type': 'application/json'},
+        headers: _defaultHeaders,
       ).timeout(requestTimeout);
 
       if (response.statusCode != 200) {
@@ -635,7 +641,7 @@ class ChatService {
 
       final response = await _client.get(
         uri,
-        headers: {'Content-Type': 'application/json'},
+        headers: _defaultHeaders,
       ).timeout(requestTimeout);
 
       if (response.statusCode != 200) {
@@ -721,7 +727,7 @@ class ChatService {
 
       final response = await _client.get(
         uri,
-        headers: {'Content-Type': 'application/json'},
+        headers: _defaultHeaders,
       ).timeout(requestTimeout);
 
       if (response.statusCode == 404) {
@@ -748,7 +754,7 @@ class ChatService {
     try {
       final response = await _client.put(
         Uri.parse('$baseUrl/api/write'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _defaultHeaders,
         body: jsonEncode({
           'path': relativePath,
           'content': content,
@@ -925,7 +931,7 @@ class ChatService {
     try {
       final response = await _client.get(
         Uri.parse('$baseUrl/api/curator/${Uri.encodeComponent(sessionId)}'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _defaultHeaders,
       ).timeout(requestTimeout);
 
       if (response.statusCode == 404) {
@@ -953,7 +959,7 @@ class ChatService {
     try {
       final response = await _client.post(
         Uri.parse('$baseUrl/api/curator/${Uri.encodeComponent(sessionId)}/trigger'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _defaultHeaders,
       ).timeout(requestTimeout);
 
       if (response.statusCode != 200) {
@@ -973,7 +979,7 @@ class ChatService {
     try {
       final response = await _client.get(
         Uri.parse('$baseUrl/api/curator/task/$taskId'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _defaultHeaders,
       ).timeout(requestTimeout);
 
       if (response.statusCode == 404) {
@@ -1002,7 +1008,7 @@ class ChatService {
     try {
       final response = await _client.get(
         Uri.parse('$baseUrl/api/claude-code/recent?limit=$limit'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _defaultHeaders,
       ).timeout(const Duration(seconds: 60)); // Can be slow scanning many projects
 
       if (response.statusCode != 200) {
@@ -1026,7 +1032,7 @@ class ChatService {
     try {
       final response = await _client.get(
         Uri.parse('$baseUrl/api/claude-code/projects'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _defaultHeaders,
       ).timeout(requestTimeout);
 
       if (response.statusCode != 200) {
@@ -1050,7 +1056,7 @@ class ChatService {
     try {
       final response = await _client.get(
         Uri.parse('$baseUrl/api/claude-code/sessions?path=${Uri.encodeComponent(projectPath)}'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _defaultHeaders,
       ).timeout(const Duration(seconds: 60)); // Can be slow for large projects
 
       if (response.statusCode != 200) {
@@ -1081,7 +1087,7 @@ class ChatService {
 
       final response = await _client.get(
         uri,
-        headers: {'Content-Type': 'application/json'},
+        headers: _defaultHeaders,
       ).timeout(const Duration(seconds: 60));
 
       if (response.statusCode == 404) {
@@ -1113,7 +1119,7 @@ class ChatService {
 
       final response = await _client.post(
         uri,
-        headers: {'Content-Type': 'application/json'},
+        headers: _defaultHeaders,
         body: workingDirectory != null
             ? jsonEncode({'workingDirectory': workingDirectory})
             : null,

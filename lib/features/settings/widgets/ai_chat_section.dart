@@ -14,7 +14,6 @@ class AiChatSection extends ConsumerStatefulWidget {
 }
 
 class _AiChatSectionState extends ConsumerState<AiChatSection> {
-  bool _aiChatEnabled = false;
   String _aiServerUrl = 'http://localhost:3333';
   final TextEditingController _aiServerUrlController = TextEditingController();
   bool _isLoading = true;
@@ -33,34 +32,10 @@ class _AiChatSectionState extends ConsumerState<AiChatSection> {
 
   Future<void> _loadSettings() async {
     final featureFlagsService = ref.read(featureFlagsServiceProvider);
-    _aiChatEnabled = await featureFlagsService.isAiChatEnabled();
     _aiServerUrl = await featureFlagsService.getAiServerUrl();
     _aiServerUrlController.text = _aiServerUrl;
     if (mounted) {
       setState(() => _isLoading = false);
-    }
-  }
-
-  Future<void> _setAiChatEnabled(bool enabled) async {
-    final featureFlagsService = ref.read(featureFlagsServiceProvider);
-    await featureFlagsService.setAiChatEnabled(enabled);
-    setState(() => _aiChatEnabled = enabled);
-
-    // Invalidate the provider to update the navigation immediately
-    ref.invalidate(aiChatEnabledNotifierProvider);
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            enabled
-                ? 'AI Chat enabled - Chat tab now visible'
-                : 'AI Chat disabled',
-          ),
-          backgroundColor: enabled ? BrandColors.success : BrandColors.driftwood,
-          duration: const Duration(seconds: 2),
-        ),
-      );
     }
   }
 

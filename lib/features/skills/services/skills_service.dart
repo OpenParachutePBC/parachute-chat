@@ -16,6 +16,12 @@ class SkillsService {
 
   static const Duration requestTimeout = Duration(seconds: 30);
 
+  /// Standard headers for all requests - identifies this as a Parachute app
+  static const Map<String, String> _defaultHeaders = {
+    'Content-Type': 'application/json',
+    'User-Agent': 'Parachute-Chat/1.0',
+  };
+
   SkillsService({required this.baseUrl}) : _client = http.Client();
 
   /// List all available skills
@@ -24,7 +30,7 @@ class SkillsService {
       final response = await _client
           .get(
             Uri.parse('$baseUrl/api/skills'),
-            headers: {'Content-Type': 'application/json'},
+            headers: _defaultHeaders,
           )
           .timeout(requestTimeout);
 
@@ -49,7 +55,7 @@ class SkillsService {
       final response = await _client
           .get(
             Uri.parse('$baseUrl/api/skills/$name'),
-            headers: {'Content-Type': 'application/json'},
+            headers: _defaultHeaders,
           )
           .timeout(requestTimeout);
 
@@ -75,7 +81,7 @@ class SkillsService {
       final response = await _client
           .post(
             Uri.parse('$baseUrl/api/skills'),
-            headers: {'Content-Type': 'application/json'},
+            headers: _defaultHeaders,
             body: jsonEncode(input.toJson()),
           )
           .timeout(requestTimeout);
@@ -99,7 +105,7 @@ class SkillsService {
       final response = await _client
           .delete(
             Uri.parse('$baseUrl/api/skills/$name'),
-            headers: {'Content-Type': 'application/json'},
+            headers: _defaultHeaders,
           )
           .timeout(requestTimeout);
 

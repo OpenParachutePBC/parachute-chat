@@ -135,71 +135,76 @@ class _McpSectionState extends ConsumerState<McpSection> {
     final controller = TextEditingController();
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    final result = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Import MCP Config'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Paste your MCP server JSON config below:',
-                style: TextStyle(
-                  fontSize: TypographyTokens.bodySmall,
-                  color: isDark
-                      ? BrandColors.nightTextSecondary
-                      : BrandColors.driftwood,
+    try {
+      final result = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Import MCP Config'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Paste your MCP server JSON config below:',
+                  style: TextStyle(
+                    fontSize: TypographyTokens.bodySmall,
+                    color: isDark
+                        ? BrandColors.nightTextSecondary
+                        : BrandColors.driftwood,
+                  ),
                 ),
-              ),
-              SizedBox(height: Spacing.md),
-              TextField(
-                controller: controller,
-                maxLines: 10,
-                style: const TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 12,
-                ),
-                decoration: InputDecoration(
-                  hintText: '{\n  "mcpServers": {\n    "name": {\n      "command": "npx",\n      ...\n    }\n  }\n}',
-                  hintStyle: TextStyle(
+                SizedBox(height: Spacing.md),
+                TextField(
+                  controller: controller,
+                  maxLines: 10,
+                  style: const TextStyle(
                     fontFamily: 'monospace',
                     fontSize: 12,
-                    color: isDark
-                        ? BrandColors.nightTextSecondary.withValues(alpha: 0.5)
-                        : BrandColors.driftwood.withValues(alpha: 0.5),
                   ),
-                  border: const OutlineInputBorder(),
-                  filled: true,
-                  fillColor: isDark
-                      ? BrandColors.nightSurface
-                      : BrandColors.cream.withValues(alpha: 0.5),
+                  decoration: InputDecoration(
+                    hintText: '{\n  "mcpServers": {\n    "name": {\n      "command": "npx",\n      ...\n    }\n  }\n}',
+                    hintStyle: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                      color: isDark
+                          ? BrandColors.nightTextSecondary.withValues(alpha: 0.5)
+                          : BrandColors.driftwood.withValues(alpha: 0.5),
+                    ),
+                    border: const OutlineInputBorder(),
+                    filled: true,
+                    fillColor: isDark
+                        ? BrandColors.nightSurface
+                        : BrandColors.cream.withValues(alpha: 0.5),
+                  ),
                 ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, controller.text),
-            style: FilledButton.styleFrom(
-              backgroundColor: BrandColors.forest,
+              ],
             ),
-            child: const Text('Import'),
           ),
-        ],
-      ),
-    );
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, controller.text),
+              style: FilledButton.styleFrom(
+                backgroundColor: BrandColors.forest,
+              ),
+              child: const Text('Import'),
+            ),
+          ],
+        ),
+      );
 
-    if (result == null || result.trim().isEmpty) return;
+      if (result == null || result.trim().isEmpty) return;
 
-    _parseAndImportConfig(result.trim());
+      _parseAndImportConfig(result.trim());
+    } finally {
+      // Always dispose the controller to prevent memory leaks
+      controller.dispose();
+    }
   }
 
   void _parseAndImportConfig(String text) {
@@ -847,52 +852,58 @@ class _McpSectionState extends ConsumerState<McpSection> {
     final tokenController = TextEditingController();
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    final token = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Add API Token for ${server.name}'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Enter your API token or key:',
-              style: TextStyle(
-                fontSize: TypographyTokens.bodySmall,
-                color: isDark
-                    ? BrandColors.nightTextSecondary
-                    : BrandColors.driftwood,
+    String? token;
+    try {
+      token = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('Add API Token for ${server.name}'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Enter your API token or key:',
+                style: TextStyle(
+                  fontSize: TypographyTokens.bodySmall,
+                  color: isDark
+                      ? BrandColors.nightTextSecondary
+                      : BrandColors.driftwood,
+                ),
               ),
+              SizedBox(height: Spacing.md),
+              TextField(
+                controller: tokenController,
+                obscureText: true,
+                decoration: InputDecoration(
+                  labelText: 'API Token',
+                  hintText: 'sk-...',
+                  border: const OutlineInputBorder(),
+                  filled: true,
+                  fillColor: isDark
+                      ? BrandColors.nightSurface
+                      : BrandColors.cream.withValues(alpha: 0.5),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
             ),
-            SizedBox(height: Spacing.md),
-            TextField(
-              controller: tokenController,
-              obscureText: true,
-              decoration: InputDecoration(
-                labelText: 'API Token',
-                hintText: 'sk-...',
-                border: const OutlineInputBorder(),
-                filled: true,
-                fillColor: isDark
-                    ? BrandColors.nightSurface
-                    : BrandColors.cream.withValues(alpha: 0.5),
-              ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, tokenController.text.trim()),
+              style: FilledButton.styleFrom(backgroundColor: BrandColors.forest),
+              child: const Text('Save'),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, tokenController.text.trim()),
-            style: FilledButton.styleFrom(backgroundColor: BrandColors.forest),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
+      );
+    } finally {
+      // Always dispose the controller to prevent memory leaks
+      tokenController.dispose();
+    }
 
     if (token == null || token.isEmpty) return;
 
