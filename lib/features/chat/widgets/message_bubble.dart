@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:parachute_chat/core/theme/design_tokens.dart';
 import 'package:parachute_chat/core/providers/file_system_provider.dart';
 import 'package:parachute_chat/core/services/performance_service.dart';
@@ -151,11 +152,13 @@ class MessageBubble extends ConsumerWidget {
         : (isDark ? BrandColors.nightText : BrandColors.charcoal);
 
     // Use markdown for both user and assistant messages to support formatting
+    // Note: selectable: false because we use SelectionArea wrapper for proper
+    // multi-line selection across the entire message bubble
     return Padding(
       padding: Spacing.cardPadding,
       child: MarkdownBody(
               data: text,
-              selectable: true,
+              selectable: false,
               // ignore: deprecated_member_use
               imageBuilder: (uri, title, alt) =>
                   _buildImage(uri, title, alt, vaultPath, isDark),
@@ -166,6 +169,15 @@ class MessageBubble extends ConsumerWidget {
                   color: textColor,
                   fontSize: TypographyTokens.bodyMedium,
                   height: TypographyTokens.lineHeightNormal,
+                ),
+                a: TextStyle(
+                  color: isUser
+                      ? Colors.white
+                      : (isDark ? BrandColors.nightTurquoise : BrandColors.turquoise),
+                  decoration: TextDecoration.underline,
+                  decorationColor: isUser
+                      ? Colors.white.withValues(alpha: 0.7)
+                      : (isDark ? BrandColors.nightTurquoise : BrandColors.turquoise),
                 ),
                 code: TextStyle(
                   color: textColor,
@@ -551,8 +563,8 @@ class MessageBubble extends ConsumerWidget {
     );
   }
 
-  /// Handle link taps - special handling for audio files
-  void _handleLinkTap(BuildContext context, String text, String? href, String? title, String? vaultPath) {
+  /// Handle link taps - special handling for audio files and web links
+  void _handleLinkTap(BuildContext context, String text, String? href, String? title, String? vaultPath) async {
     if (href == null) return;
 
     // Check if it's an audio file
@@ -566,8 +578,59 @@ class MessageBubble extends ConsumerWidget {
       if (path != null) {
         _showAudioPlayer(context, path, text);
       }
+      return;
     }
-    // For other links, could open in browser or handle differently
+
+    // Handle web links (http/https)
+    if (href.startsWith('http://') || href.startsWith('https://')) {
+      final uri = Uri.tryParse(href);
+      if (uri != null) {
+        try {
+          final launched = await launchUrl(
+            uri,
+            mode: LaunchMode.externalApplication,
+          );
+          if (!launched && context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Could not open link: $href'),
+                duration: const Duration(seconds: 2),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
+        } catch (e) {
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Error opening link: $e'),
+                duration: const Duration(seconds: 2),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
+        }
+      }
+      return;
+    }
+
+    // Handle mailto links
+    if (href.startsWith('mailto:')) {
+      final uri = Uri.tryParse(href);
+      if (uri != null) {
+        await launchUrl(uri);
+      }
+      return;
+    }
+
+    // Handle local file links - try to open in Finder/Explorer
+    final resolvedPath = _resolveAssetPath(href, vaultPath);
+    if (resolvedPath != null) {
+      final file = File(resolvedPath);
+      if (await file.exists()) {
+        _revealInFinder(file);
+      }
+    }
   }
 
   /// Show a bottom sheet with the audio player

@@ -235,6 +235,99 @@ class CuratorTask {
   }
 }
 
+/// A single message in the curator's conversation
+class CuratorMessage {
+  final String role;
+  final String content;
+  final String? timestamp;
+  final List<CuratorToolCall>? toolCalls;
+
+  const CuratorMessage({
+    required this.role,
+    required this.content,
+    this.timestamp,
+    this.toolCalls,
+  });
+
+  factory CuratorMessage.fromJson(Map<String, dynamic> json) {
+    return CuratorMessage(
+      role: json['role'] as String,
+      content: json['content'] as String? ?? '',
+      timestamp: json['timestamp'] as String?,
+      toolCalls: (json['tool_calls'] as List<dynamic>?)
+          ?.map((e) => CuratorToolCall.fromJson(e as Map<String, dynamic>))
+          .toList(),
+    );
+  }
+
+  bool get isUser => role == 'user';
+  bool get isAssistant => role == 'assistant';
+  bool get hasToolCalls => toolCalls != null && toolCalls!.isNotEmpty;
+
+  DateTime? get parsedTimestamp =>
+      timestamp != null ? DateTime.tryParse(timestamp!) : null;
+}
+
+/// A tool call made by the curator
+class CuratorToolCall {
+  final String? id;
+  final String name;
+  final Map<String, dynamic> input;
+
+  const CuratorToolCall({
+    this.id,
+    required this.name,
+    this.input = const {},
+  });
+
+  factory CuratorToolCall.fromJson(Map<String, dynamic> json) {
+    return CuratorToolCall(
+      id: json['id'] as String?,
+      name: json['name'] as String? ?? 'unknown',
+      input: (json['input'] as Map<String, dynamic>?) ?? {},
+    );
+  }
+
+  /// Get a user-friendly display name for the tool
+  String get displayName {
+    // Strip mcp__curator__ prefix if present
+    if (name.startsWith('mcp__curator__')) {
+      return name.substring('mcp__curator__'.length);
+    }
+    return name;
+  }
+}
+
+/// Response containing curator messages
+class CuratorMessages {
+  final List<CuratorMessage> messages;
+  final String? sdkSessionId;
+  final int? messageCount;
+  final String? errorMessage;
+
+  const CuratorMessages({
+    required this.messages,
+    this.sdkSessionId,
+    this.messageCount,
+    this.errorMessage,
+  });
+
+  factory CuratorMessages.fromJson(Map<String, dynamic> json) {
+    return CuratorMessages(
+      messages: (json['messages'] as List<dynamic>?)
+              ?.map((e) => CuratorMessage.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          [],
+      sdkSessionId: json['sdk_session_id'] as String?,
+      messageCount: json['message_count'] as int?,
+      errorMessage: json['message'] as String?,
+    );
+  }
+
+  bool get hasMessages => messages.isNotEmpty;
+  bool get hasSdkSession => sdkSessionId != null;
+}
+
 /// Combined response from the curator API
 class CuratorInfo {
   final CuratorSession? curatorSession;

@@ -998,6 +998,34 @@ class ChatService {
     }
   }
 
+  /// Get curator conversation messages for a session
+  ///
+  /// Returns the curator's full conversation history, showing what
+  /// context it was fed and how it decided what actions to take.
+  /// Useful for debugging and transparency.
+  Future<CuratorMessages> getCuratorMessages(String sessionId) async {
+    try {
+      final response = await _client.get(
+        Uri.parse('$baseUrl/api/curator/${Uri.encodeComponent(sessionId)}/messages'),
+        headers: _defaultHeaders,
+      ).timeout(requestTimeout);
+
+      if (response.statusCode == 404) {
+        return const CuratorMessages(messages: [], sdkSessionId: null);
+      }
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to get curator messages: ${response.statusCode}');
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return CuratorMessages.fromJson(data);
+    } catch (e) {
+      debugPrint('[ChatService] Error getting curator messages: $e');
+      rethrow;
+    }
+  }
+
   // ============================================================
   // Claude Code Session Import
   // ============================================================

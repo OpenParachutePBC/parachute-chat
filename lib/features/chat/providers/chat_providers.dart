@@ -193,6 +193,10 @@ class ChatMessagesState {
   /// Paths are relative to vault (e.g., "Chat/contexts/general-context.md")
   final List<String> selectedContexts;
 
+  /// Whether the user has explicitly set context preferences
+  /// When false, server uses defaults. When true, we send selectedContexts (even if empty).
+  final bool contextsExplicitlySet;
+
   /// Whether to reload the working directory CLAUDE.md on next message
   /// Set to true when user wants to refresh project context
   final bool reloadClaudeMd;
@@ -215,6 +219,7 @@ class ChatMessagesState {
     this.transcriptSegments = const [],
     this.transcriptSegmentCount = 0,
     this.selectedContexts = const [],
+    this.contextsExplicitlySet = false,
     this.reloadClaudeMd = false,
   });
 
@@ -248,6 +253,7 @@ class ChatMessagesState {
     List<TranscriptSegment>? transcriptSegments,
     int? transcriptSegmentCount,
     List<String>? selectedContexts,
+    bool? contextsExplicitlySet,
     bool? reloadClaudeMd,
     bool clearSessionUnavailable = false,
     bool clearWorkingDirectory = false,
@@ -271,6 +277,7 @@ class ChatMessagesState {
       transcriptSegments: transcriptSegments ?? this.transcriptSegments,
       transcriptSegmentCount: transcriptSegmentCount ?? this.transcriptSegmentCount,
       selectedContexts: selectedContexts ?? this.selectedContexts,
+      contextsExplicitlySet: contextsExplicitlySet ?? this.contextsExplicitlySet,
       reloadClaudeMd: reloadClaudeMd ?? this.reloadClaudeMd,
     );
   }
@@ -923,8 +930,12 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
   ///
   /// Changes take effect on the next message sent.
   /// [contexts] are paths relative to vault (e.g., "Chat/contexts/work-context.md")
+  /// This also marks contexts as explicitly set, so even an empty list means "load nothing".
   void setSelectedContexts(List<String> contexts) {
-    state = state.copyWith(selectedContexts: contexts);
+    state = state.copyWith(
+      selectedContexts: contexts,
+      contextsExplicitlySet: true,
+    );
   }
 
   /// Toggle a specific context file on or off
@@ -935,7 +946,10 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
     } else {
       current.add(contextPath);
     }
-    state = state.copyWith(selectedContexts: current);
+    state = state.copyWith(
+      selectedContexts: current,
+      contextsExplicitlySet: true,
+    );
   }
 
   /// Mark that CLAUDE.md should be reloaded on the next message
@@ -1114,9 +1128,22 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
 
       // Use provided contexts, or fall back to session's selected contexts
       // This allows mid-session context changes to take effect
-      final effectiveContexts = contexts ??
-          (state.selectedContexts.isNotEmpty ? state.selectedContexts : null);
-      debugPrint('[ChatMessagesNotifier] Using contexts: $effectiveContexts');
+      //
+      // Key distinction:
+      // - contexts param provided: use it (from new chat sheet)
+      // - contextsExplicitlySet: user made a choice via settings, use selectedContexts (even if empty)
+      // - neither: send null to let server use defaults
+      List<String>? effectiveContexts;
+      if (contexts != null) {
+        effectiveContexts = contexts;
+      } else if (state.contextsExplicitlySet) {
+        // User explicitly configured contexts - use their choice, even if empty
+        effectiveContexts = state.selectedContexts;
+      } else {
+        // No explicit choice - let server use defaults
+        effectiveContexts = null;
+      }
+      debugPrint('[ChatMessagesNotifier] Using contexts: $effectiveContexts (explicitlySet: ${state.contextsExplicitlySet})');
 
       // Clear the reload flag after capturing it (will be cleared on successful send)
       final shouldReloadClaudeMd = state.reloadClaudeMd;
@@ -1177,6 +1204,9 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
                   'messagesInjected: ${resumeInfo.messagesInjected})');
               state = state.copyWith(sessionResumeInfo: resumeInfo);
             }
+            // Refresh sessions list immediately so new chats appear right away
+            // (Previously only refreshed on 'done' event, so chats wouldn't show until complete)
+            _ref.invalidate(chatSessionsProvider);
             break;
 
           case StreamEventType.model:
@@ -1667,6 +1697,17 @@ final selectedContextsProvider = StateProvider<List<String>>((ref) {
 final curatorInfoProvider = FutureProvider.family<CuratorInfo, String>((ref, sessionId) async {
   final service = ref.watch(chatServiceProvider);
   return service.getCuratorInfo(sessionId);
+});
+
+/// Provider for curator conversation messages
+///
+/// Fetches the curator's full conversation history showing what
+/// context it was fed and how it made decisions.
+/// Use with .family to specify the session ID:
+/// - ref.watch(curatorMessagesProvider(sessionId))
+final curatorMessagesProvider = FutureProvider.family<CuratorMessages, String>((ref, sessionId) async {
+  final service = ref.watch(chatServiceProvider);
+  return service.getCuratorMessages(sessionId);
 });
 
 /// Provider for manually triggering a curator run

@@ -165,9 +165,11 @@ class _CollapsibleThinkingSectionState extends State<CollapsibleThinkingSection>
             ),
           ),
           Expanded(
+            // Note: selectable: false because parent uses SelectionArea wrapper
+            // for proper multi-line selection across the entire message
             child: MarkdownBody(
               data: text,
-              selectable: true,
+              selectable: false,
               styleSheet: MarkdownStyleSheet(
                 p: TextStyle(
                   color: widget.isDark

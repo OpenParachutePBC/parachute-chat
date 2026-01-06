@@ -1,15 +1,16 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute_chat/core/theme/design_tokens.dart';
 import '../models/curator_session.dart';
 import '../providers/chat_providers.dart';
 
-/// Bottom sheet showing curator session activity
+/// Bottom sheet showing curator session as a chat conversation
 ///
 /// Displays:
-/// - Curator session info (last run, context files tracked)
-/// - Recent task history with status and results
-/// - Manual trigger button for testing
+/// - Chat view of curator's conversation (what context it saw, what it responded)
+/// - Tool calls shown as special message blocks
+/// - Task history tab for debugging
 class CuratorSessionViewerSheet extends ConsumerStatefulWidget {
   final String sessionId;
 
@@ -34,30 +35,21 @@ class CuratorSessionViewerSheet extends ConsumerStatefulWidget {
 }
 
 class _CuratorSessionViewerSheetState
-    extends ConsumerState<CuratorSessionViewerSheet> {
+    extends ConsumerState<CuratorSessionViewerSheet>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabController;
   bool _isTriggering = false;
-  CuratorTask? _selectedTask;
 
-  /// Format a DateTime to a readable string
-  String _formatDate(DateTime dt) {
-    final local = dt.toLocal();
-    final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-                    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    final hour = local.hour > 12 ? local.hour - 12 : (local.hour == 0 ? 12 : local.hour);
-    final amPm = local.hour >= 12 ? 'PM' : 'AM';
-    final minute = local.minute.toString().padLeft(2, '0');
-    return '${months[local.month - 1]} ${local.day}, $hour:$minute $amPm';
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
   }
 
-  String _formatDateWithSeconds(DateTime dt) {
-    final local = dt.toLocal();
-    final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-                    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    final hour = local.hour > 12 ? local.hour - 12 : (local.hour == 0 ? 12 : local.hour);
-    final amPm = local.hour >= 12 ? 'PM' : 'AM';
-    final minute = local.minute.toString().padLeft(2, '0');
-    final second = local.second.toString().padLeft(2, '0');
-    return '${months[local.month - 1]} ${local.day}, $hour:$minute:$second $amPm';
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
   }
 
   Future<void> _triggerCurator() async {
@@ -65,8 +57,9 @@ class _CuratorSessionViewerSheetState
     try {
       final trigger = ref.read(triggerCuratorProvider);
       await trigger(widget.sessionId);
-      // Refresh the curator info
+      // Refresh both providers
       ref.invalidate(curatorInfoProvider(widget.sessionId));
+      ref.invalidate(curatorMessagesProvider(widget.sessionId));
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -84,7 +77,6 @@ class _CuratorSessionViewerSheetState
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final curatorInfoAsync = ref.watch(curatorInfoProvider(widget.sessionId));
 
     return Container(
       constraints: BoxConstraints(
@@ -112,9 +104,9 @@ class _CuratorSessionViewerSheetState
             ),
           ),
 
-          // Header
+          // Header with tabs
           Padding(
-            padding: const EdgeInsets.all(Spacing.lg),
+            padding: const EdgeInsets.fromLTRB(Spacing.lg, Spacing.md, Spacing.md, 0),
             child: Row(
               children: [
                 Icon(
@@ -124,7 +116,7 @@ class _CuratorSessionViewerSheetState
                 ),
                 const SizedBox(width: Spacing.sm),
                 Text(
-                  _selectedTask != null ? 'Task Details' : 'Curator Activity',
+                  'Curator',
                   style: TextStyle(
                     fontSize: TypographyTokens.titleLarge,
                     fontWeight: FontWeight.w600,
@@ -132,17 +124,23 @@ class _CuratorSessionViewerSheetState
                   ),
                 ),
                 const Spacer(),
-                if (_selectedTask != null)
-                  IconButton(
-                    onPressed: () => setState(() => _selectedTask = null),
-                    icon: Icon(
-                      Icons.arrow_back,
-                      color: isDark
-                          ? BrandColors.nightTextSecondary
-                          : BrandColors.driftwood,
-                    ),
-                    tooltip: 'Back to list',
-                  ),
+                // Trigger button
+                IconButton(
+                  onPressed: _isTriggering ? null : _triggerCurator,
+                  icon: _isTriggering
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Icon(
+                          Icons.play_arrow,
+                          color: isDark
+                              ? BrandColors.nightForest
+                              : BrandColors.forest,
+                        ),
+                  tooltip: 'Run curator now',
+                ),
                 IconButton(
                   onPressed: () => Navigator.pop(context),
                   icon: Icon(
@@ -156,118 +154,441 @@ class _CuratorSessionViewerSheetState
             ),
           ),
 
+          // Tab bar
+          TabBar(
+            controller: _tabController,
+            labelColor: isDark ? BrandColors.nightForest : BrandColors.forest,
+            unselectedLabelColor:
+                isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+            indicatorColor:
+                isDark ? BrandColors.nightForest : BrandColors.forest,
+            tabs: const [
+              Tab(text: 'Chat', icon: Icon(Icons.chat_bubble_outline, size: 18)),
+              Tab(text: 'Tasks', icon: Icon(Icons.history, size: 18)),
+            ],
+          ),
+
           const Divider(height: 1),
 
-          // Content
+          // Tab content
           Flexible(
-            child: curatorInfoAsync.when(
-              data: (info) => _selectedTask != null
-                  ? _buildTaskDetailView(isDark, _selectedTask!)
-                  : _buildMainView(isDark, info),
-              loading: () => const Center(
-                child: Padding(
-                  padding: EdgeInsets.all(Spacing.xl),
-                  child: CircularProgressIndicator(),
-                ),
-              ),
-              error: (e, _) => Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(Spacing.xl),
-                  child: Text(
-                    'Error loading curator info:\n$e',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: isDark
-                          ? BrandColors.nightTextSecondary
-                          : BrandColors.driftwood,
-                    ),
-                  ),
-                ),
-              ),
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                _CuratorChatView(sessionId: widget.sessionId),
+                _CuratorTasksView(sessionId: widget.sessionId),
+              ],
             ),
           ),
         ],
       ),
     );
   }
+}
 
-  Widget _buildMainView(bool isDark, CuratorInfo info) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(Spacing.lg),
+/// Chat view showing the curator's conversation
+class _CuratorChatView extends ConsumerWidget {
+  final String sessionId;
+
+  const _CuratorChatView({required this.sessionId});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final messagesAsync = ref.watch(curatorMessagesProvider(sessionId));
+
+    return messagesAsync.when(
+      data: (data) {
+        if (!data.hasMessages) {
+          return _buildEmptyState(isDark, data.errorMessage);
+        }
+        return _buildChatList(context, isDark, data.messages);
+      },
+      loading: () => const Center(
+        child: Padding(
+          padding: EdgeInsets.all(Spacing.xl),
+          child: CircularProgressIndicator(),
+        ),
+      ),
+      error: (e, _) => Center(
+        child: Padding(
+          padding: const EdgeInsets.all(Spacing.xl),
+          child: Text(
+            'Error loading curator chat:\n$e',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color:
+                  isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyState(bool isDark, String? message) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(Spacing.xl),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.chat_bubble_outline,
+              size: 48,
+              color:
+                  isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+            ),
+            const SizedBox(height: Spacing.md),
+            Text(
+              message ?? 'No curator conversation yet',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: isDark
+                    ? BrandColors.nightTextSecondary
+                    : BrandColors.driftwood,
+              ),
+            ),
+            const SizedBox(height: Spacing.sm),
+            Text(
+              'The curator will start a conversation after\nyour first chat message.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: TypographyTokens.bodySmall,
+                color: isDark
+                    ? BrandColors.nightTextSecondary.withValues(alpha: 0.7)
+                    : BrandColors.driftwood.withValues(alpha: 0.7),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildChatList(
+    BuildContext context,
+    bool isDark,
+    List<CuratorMessage> messages,
+  ) {
+    return ListView.builder(
+      padding: const EdgeInsets.all(Spacing.md),
+      itemCount: messages.length,
+      itemBuilder: (context, index) {
+        final message = messages[index];
+        return _CuratorMessageBubble(
+          message: message,
+          isDark: isDark,
+        );
+      },
+    );
+  }
+}
+
+/// A single message bubble in the curator chat
+class _CuratorMessageBubble extends StatelessWidget {
+  final CuratorMessage message;
+  final bool isDark;
+
+  const _CuratorMessageBubble({
+    required this.message,
+    required this.isDark,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isUser = message.isUser;
+    final alignment = isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start;
+    final bubbleColor = isUser
+        ? (isDark ? BrandColors.nightForest.withValues(alpha: 0.3) : BrandColors.forest.withValues(alpha: 0.15))
+        : (isDark ? BrandColors.nightSurfaceElevated : BrandColors.stone);
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: Spacing.md),
+      child: Column(
+        crossAxisAlignment: alignment,
+        children: [
+          // Role label
+          Padding(
+            padding: const EdgeInsets.only(bottom: Spacing.xs),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  isUser ? Icons.person : Icons.auto_fix_high,
+                  size: 14,
+                  color: isUser
+                      ? (isDark ? BrandColors.nightForest : BrandColors.forest)
+                      : (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood),
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  isUser ? 'Context' : 'Curator',
+                  style: TextStyle(
+                    fontSize: TypographyTokens.labelSmall,
+                    fontWeight: FontWeight.w500,
+                    color: isUser
+                        ? (isDark ? BrandColors.nightForest : BrandColors.forest)
+                        : (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Message content
+          Container(
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width * 0.85,
+            ),
+            padding: const EdgeInsets.all(Spacing.md),
+            decoration: BoxDecoration(
+              color: bubbleColor,
+              borderRadius: BorderRadius.circular(Radii.md),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Text content
+                if (message.content.isNotEmpty)
+                  SelectableText(
+                    message.content,
+                    style: TextStyle(
+                      fontSize: TypographyTokens.bodyMedium,
+                      color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+                    ),
+                  ),
+
+                // Tool calls
+                if (message.hasToolCalls) ...[
+                  if (message.content.isNotEmpty)
+                    const SizedBox(height: Spacing.sm),
+                  ...message.toolCalls!.map((tool) => _ToolCallChip(
+                        tool: tool,
+                        isDark: isDark,
+                      )),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A chip showing a tool call
+class _ToolCallChip extends StatefulWidget {
+  final CuratorToolCall tool;
+  final bool isDark;
+
+  const _ToolCallChip({
+    required this.tool,
+    required this.isDark,
+  });
+
+  @override
+  State<_ToolCallChip> createState() => _ToolCallChipState();
+}
+
+class _ToolCallChipState extends State<_ToolCallChip> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final toolColor = widget.isDark ? BrandColors.nightForest : BrandColors.forest;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: Spacing.xs),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Curator Status Card
-          _buildStatusCard(isDark, info),
-
-          const SizedBox(height: Spacing.lg),
-
-          // Manual Trigger Button
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: _isTriggering ? null : _triggerCurator,
-              icon: _isTriggering
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.play_arrow),
-              label: Text(_isTriggering ? 'Running...' : 'Trigger Curator'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor:
-                    isDark ? BrandColors.nightForest : BrandColors.forest,
-                side: BorderSide(
-                  color: isDark ? BrandColors.nightForest : BrandColors.forest,
-                ),
+          InkWell(
+            onTap: () => setState(() => _expanded = !_expanded),
+            borderRadius: BorderRadius.circular(Radii.sm),
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: Spacing.sm,
+                vertical: Spacing.xs,
               ),
-            ),
-          ),
-
-          const SizedBox(height: Spacing.xl),
-
-          // Task History Section
-          Text(
-            'Recent Activity',
-            style: TextStyle(
-              fontSize: TypographyTokens.titleMedium,
-              fontWeight: FontWeight.w600,
-              color: isDark ? BrandColors.nightText : BrandColors.charcoal,
-            ),
-          ),
-          const SizedBox(height: Spacing.md),
-
-          if (info.recentTasks.isEmpty)
-            Center(
-              child: Padding(
-                padding: const EdgeInsets.all(Spacing.xl),
-                child: Column(
-                  children: [
-                    Icon(
-                      Icons.history,
-                      size: 48,
-                      color: isDark
-                          ? BrandColors.nightTextSecondary
-                          : BrandColors.driftwood,
+              decoration: BoxDecoration(
+                color: toolColor.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(Radii.sm),
+                border: Border.all(color: toolColor.withValues(alpha: 0.3)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    _getToolIcon(widget.tool.displayName),
+                    size: 14,
+                    color: toolColor,
+                  ),
+                  const SizedBox(width: Spacing.xs),
+                  Text(
+                    widget.tool.displayName,
+                    style: TextStyle(
+                      fontSize: TypographyTokens.bodySmall,
+                      fontWeight: FontWeight.w500,
+                      color: toolColor,
                     ),
-                    const SizedBox(height: Spacing.md),
-                    Text(
-                      'No curator activity yet',
-                      style: TextStyle(
-                        color: isDark
-                            ? BrandColors.nightTextSecondary
-                            : BrandColors.driftwood,
-                      ),
+                  ),
+                  if (widget.tool.input.isNotEmpty) ...[
+                    const SizedBox(width: Spacing.xs),
+                    Icon(
+                      _expanded ? Icons.expand_less : Icons.expand_more,
+                      size: 14,
+                      color: toolColor,
                     ),
                   ],
+                ],
+              ),
+            ),
+          ),
+
+          // Expanded tool input
+          if (_expanded && widget.tool.input.isNotEmpty)
+            Container(
+              margin: const EdgeInsets.only(top: Spacing.xs),
+              padding: const EdgeInsets.all(Spacing.sm),
+              decoration: BoxDecoration(
+                color: widget.isDark
+                    ? BrandColors.nightSurface
+                    : BrandColors.softWhite,
+                borderRadius: BorderRadius.circular(Radii.sm),
+                border: Border.all(
+                  color: widget.isDark
+                      ? BrandColors.nightTextSecondary.withValues(alpha: 0.2)
+                      : BrandColors.driftwood.withValues(alpha: 0.2),
                 ),
               ),
-            )
-          else
-            ...info.recentTasks.map((task) => _buildTaskCard(isDark, task)),
+              child: SelectableText(
+                _formatJson(widget.tool.input),
+                style: TextStyle(
+                  fontSize: TypographyTokens.bodySmall,
+                  fontFamily: 'monospace',
+                  color: widget.isDark
+                      ? BrandColors.nightText
+                      : BrandColors.charcoal,
+                ),
+              ),
+            ),
         ],
       ),
+    );
+  }
+
+  IconData _getToolIcon(String toolName) {
+    switch (toolName) {
+      case 'update_title':
+        return Icons.title;
+      case 'update_context':
+        return Icons.note_add;
+      case 'list_context_files':
+        return Icons.folder_open;
+      case 'get_session_info':
+        return Icons.info_outline;
+      default:
+        return Icons.build;
+    }
+  }
+
+  String _formatJson(Map<String, dynamic> input) {
+    const encoder = JsonEncoder.withIndent('  ');
+    return encoder.convert(input);
+  }
+}
+
+/// Tasks view showing curator task history
+class _CuratorTasksView extends ConsumerWidget {
+  final String sessionId;
+
+  const _CuratorTasksView({required this.sessionId});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final infoAsync = ref.watch(curatorInfoProvider(sessionId));
+
+    return infoAsync.when(
+      data: (info) {
+        if (info.recentTasks.isEmpty) {
+          return _buildEmptyState(isDark);
+        }
+        return _buildTaskList(context, isDark, info);
+      },
+      loading: () => const Center(
+        child: Padding(
+          padding: EdgeInsets.all(Spacing.xl),
+          child: CircularProgressIndicator(),
+        ),
+      ),
+      error: (e, _) => Center(
+        child: Padding(
+          padding: const EdgeInsets.all(Spacing.xl),
+          child: Text(
+            'Error loading task history:\n$e',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color:
+                  isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyState(bool isDark) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(Spacing.xl),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.history,
+              size: 48,
+              color:
+                  isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+            ),
+            const SizedBox(height: Spacing.md),
+            Text(
+              'No task history yet',
+              style: TextStyle(
+                color: isDark
+                    ? BrandColors.nightTextSecondary
+                    : BrandColors.driftwood,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTaskList(BuildContext context, bool isDark, CuratorInfo info) {
+    return ListView(
+      padding: const EdgeInsets.all(Spacing.md),
+      children: [
+        // Status card
+        _buildStatusCard(isDark, info),
+        const SizedBox(height: Spacing.lg),
+
+        // Task history
+        Text(
+          'Recent Tasks',
+          style: TextStyle(
+            fontSize: TypographyTokens.titleSmall,
+            fontWeight: FontWeight.w600,
+            color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+          ),
+        ),
+        const SizedBox(height: Spacing.sm),
+        ...info.recentTasks.map((task) => _TaskCard(task: task, isDark: isDark)),
+      ],
     );
   }
 
@@ -287,104 +608,42 @@ class _CuratorSessionViewerSheetState
               : BrandColors.driftwood.withValues(alpha: 0.2),
         ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          Row(
-            children: [
-              Icon(
-                curator != null ? Icons.check_circle : Icons.pending,
-                size: 20,
-                color: curator != null
-                    ? (isDark ? BrandColors.nightForest : BrandColors.forest)
-                    : (isDark
-                        ? BrandColors.nightTextSecondary
-                        : BrandColors.driftwood),
-              ),
-              const SizedBox(width: Spacing.sm),
-              Text(
-                curator != null ? 'Curator Active' : 'No Curator Yet',
-                style: TextStyle(
-                  fontSize: TypographyTokens.bodyLarge,
-                  fontWeight: FontWeight.w500,
-                  color: isDark ? BrandColors.nightText : BrandColors.charcoal,
-                ),
-              ),
-            ],
+          Icon(
+            curator != null ? Icons.check_circle : Icons.pending,
+            size: 20,
+            color: curator != null
+                ? (isDark ? BrandColors.nightForest : BrandColors.forest)
+                : (isDark
+                    ? BrandColors.nightTextSecondary
+                    : BrandColors.driftwood),
           ),
-          if (curator != null) ...[
-            const SizedBox(height: Spacing.md),
-            _buildInfoRow(
-              isDark,
-              label: 'Last Run',
-              value: curator.lastRunAt != null
-                  ? _formatDate(curator.lastRunAt!)
-                  : 'Never',
-            ),
-            const SizedBox(height: Spacing.xs),
-            _buildInfoRow(
-              isDark,
-              label: 'Messages Processed',
-              value: curator.lastMessageIndex.toString(),
-            ),
-            if (curator.contextFiles.isNotEmpty) ...[
-              const SizedBox(height: Spacing.xs),
-              _buildInfoRow(
-                isDark,
-                label: 'Context Files',
-                value: curator.contextFiles.join(', '),
-              ),
-            ],
-          ],
-          const SizedBox(height: Spacing.md),
-          Row(
-            children: [
-              _buildStatBadge(
-                isDark,
-                label: 'Completed',
-                count: info.completedTaskCount,
-                color: BrandColors.forest,
-              ),
-              const SizedBox(width: Spacing.sm),
-              _buildStatBadge(
-                isDark,
-                label: 'With Updates',
-                count: info.tasksWithUpdates,
-                color: BrandColors.warning,
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildInfoRow(bool isDark, {required String label, required String value}) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: 120,
-          child: Text(
-            label,
+          const SizedBox(width: Spacing.sm),
+          Text(
+            curator != null ? 'Curator Active' : 'No Curator Yet',
             style: TextStyle(
-              fontSize: TypographyTokens.bodySmall,
-              color: isDark
-                  ? BrandColors.nightTextSecondary
-                  : BrandColors.driftwood,
-            ),
-          ),
-        ),
-        Expanded(
-          child: Text(
-            value,
-            style: TextStyle(
-              fontSize: TypographyTokens.bodySmall,
+              fontSize: TypographyTokens.bodyLarge,
+              fontWeight: FontWeight.w500,
               color: isDark ? BrandColors.nightText : BrandColors.charcoal,
             ),
           ),
-        ),
-      ],
+          const Spacer(),
+          _buildStatBadge(
+            isDark,
+            label: 'Tasks',
+            count: info.completedTaskCount,
+            color: BrandColors.forest,
+          ),
+          const SizedBox(width: Spacing.sm),
+          _buildStatBadge(
+            isDark,
+            label: 'Updates',
+            count: info.tasksWithUpdates,
+            color: BrandColors.warning,
+          ),
+        ],
+      ),
     );
   }
 
@@ -414,30 +673,35 @@ class _CuratorSessionViewerSheetState
               color: color,
             ),
           ),
-          const SizedBox(width: Spacing.xs),
+          const SizedBox(width: 4),
           Text(
             label,
             style: TextStyle(
               fontSize: TypographyTokens.bodySmall,
-              color: isDark
-                  ? BrandColors.nightTextSecondary
-                  : BrandColors.driftwood,
+              color:
+                  isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
             ),
           ),
         ],
       ),
     );
   }
+}
 
-  Widget _buildTaskCard(bool isDark, CuratorTask task) {
+/// A card showing a single curator task
+class _TaskCard extends StatelessWidget {
+  final CuratorTask task;
+  final bool isDark;
+
+  const _TaskCard({required this.task, required this.isDark});
+
+  @override
+  Widget build(BuildContext context) {
     final statusColor = _getStatusColor(task.status);
-    final hasResult = task.result != null;
 
     return Card(
       margin: const EdgeInsets.only(bottom: Spacing.sm),
-      color: isDark
-          ? BrandColors.nightSurfaceElevated
-          : BrandColors.softWhite,
+      color: isDark ? BrandColors.nightSurfaceElevated : BrandColors.softWhite,
       elevation: 0,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(Radii.md),
@@ -447,114 +711,95 @@ class _CuratorSessionViewerSheetState
               : BrandColors.driftwood.withValues(alpha: 0.2),
         ),
       ),
-      child: InkWell(
-        onTap: hasResult ? () => setState(() => _selectedTask = task) : null,
-        borderRadius: BorderRadius.circular(Radii.md),
-        child: Padding(
-          padding: const EdgeInsets.all(Spacing.md),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  // Status indicator
-                  Container(
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      color: statusColor,
-                      shape: BoxShape.circle,
-                    ),
+      child: Padding(
+        padding: const EdgeInsets.all(Spacing.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: statusColor,
+                    shape: BoxShape.circle,
                   ),
-                  const SizedBox(width: Spacing.sm),
-                  Text(
-                    task.status.displayName,
-                    style: TextStyle(
-                      fontSize: TypographyTokens.bodyMedium,
-                      fontWeight: FontWeight.w500,
-                      color: statusColor,
-                    ),
+                ),
+                const SizedBox(width: Spacing.sm),
+                Text(
+                  task.status.displayName,
+                  style: TextStyle(
+                    fontSize: TypographyTokens.bodyMedium,
+                    fontWeight: FontWeight.w500,
+                    color: statusColor,
                   ),
-                  const Spacer(),
-                  Text(
-                    _formatDate(task.queuedAt),
-                    style: TextStyle(
-                      fontSize: TypographyTokens.bodySmall,
-                      color: isDark
-                          ? BrandColors.nightTextSecondary
-                          : BrandColors.driftwood,
-                    ),
+                ),
+                const Spacer(),
+                Text(
+                  _formatTime(task.queuedAt),
+                  style: TextStyle(
+                    fontSize: TypographyTokens.bodySmall,
+                    color: isDark
+                        ? BrandColors.nightTextSecondary
+                        : BrandColors.driftwood,
                   ),
-                ],
-              ),
-              const SizedBox(height: Spacing.sm),
-              Row(
-                children: [
-                  _buildTaskChip(
-                    isDark,
-                    icon: Icons.flash_on,
-                    label: task.triggerTypeDisplay,
-                  ),
-                  if (task.result != null) ...[
-                    const SizedBox(width: Spacing.sm),
-                    if (task.result!.titleUpdated)
-                      _buildTaskChip(
-                        isDark,
-                        icon: Icons.title,
-                        label: 'Title',
-                        color: BrandColors.forest,
-                      ),
-                    if (task.result!.contextUpdated)
-                      _buildTaskChip(
-                        isDark,
-                        icon: Icons.note_add,
-                        label: 'Context',
-                        color: BrandColors.warning,
-                      ),
-                    if (task.result!.noChanges)
-                      _buildTaskChip(
-                        isDark,
-                        icon: Icons.check,
-                        label: 'No changes',
-                        color: isDark
-                            ? BrandColors.nightTextSecondary
-                            : BrandColors.driftwood,
-                      ),
-                  ],
-                ],
-              ),
-              if (hasResult) ...[
-                const SizedBox(height: Spacing.xs),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    Text(
-                      'Tap for details',
-                      style: TextStyle(
-                        fontSize: TypographyTokens.bodySmall,
-                        color: isDark
-                            ? BrandColors.nightForest
-                            : BrandColors.forest,
-                      ),
-                    ),
-                    const SizedBox(width: Spacing.xs),
-                    Icon(
-                      Icons.chevron_right,
-                      size: 16,
-                      color:
-                          isDark ? BrandColors.nightForest : BrandColors.forest,
-                    ),
-                  ],
                 ),
               ],
+            ),
+            const SizedBox(height: Spacing.sm),
+            Wrap(
+              spacing: Spacing.sm,
+              runSpacing: Spacing.xs,
+              children: [
+                _buildChip(
+                  isDark,
+                  icon: Icons.flash_on,
+                  label: task.triggerTypeDisplay,
+                ),
+                if (task.result != null) ...[
+                  if (task.result!.titleUpdated)
+                    _buildChip(
+                      isDark,
+                      icon: Icons.title,
+                      label: 'Title',
+                      color: BrandColors.forest,
+                    ),
+                  if (task.result!.contextUpdated)
+                    _buildChip(
+                      isDark,
+                      icon: Icons.note_add,
+                      label: 'Context',
+                      color: BrandColors.warning,
+                    ),
+                  if (task.result!.noChanges)
+                    _buildChip(
+                      isDark,
+                      icon: Icons.check,
+                      label: 'No changes',
+                    ),
+                ],
+              ],
+            ),
+            // Show new title if updated
+            if (task.result?.newTitle != null) ...[
+              const SizedBox(height: Spacing.sm),
+              Text(
+                '→ "${task.result!.newTitle}"',
+                style: TextStyle(
+                  fontSize: TypographyTokens.bodySmall,
+                  fontStyle: FontStyle.italic,
+                  color: isDark ? BrandColors.nightForest : BrandColors.forest,
+                ),
+              ),
             ],
-          ),
+          ],
         ),
       ),
     );
   }
 
-  Widget _buildTaskChip(
+  Widget _buildChip(
     bool isDark, {
     required IconData icon,
     required String label,
@@ -589,194 +834,6 @@ class _CuratorSessionViewerSheetState
     );
   }
 
-  Widget _buildTaskDetailView(bool isDark, CuratorTask task) {
-    final result = task.result;
-
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(Spacing.lg),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Status and timing
-          _buildDetailSection(
-            isDark,
-            title: 'Status',
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 12,
-                      height: 12,
-                      decoration: BoxDecoration(
-                        color: _getStatusColor(task.status),
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: Spacing.sm),
-                    Text(
-                      task.status.displayName,
-                      style: TextStyle(
-                        fontSize: TypographyTokens.bodyLarge,
-                        fontWeight: FontWeight.w500,
-                        color: _getStatusColor(task.status),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: Spacing.md),
-                _buildInfoRow(isDark,
-                    label: 'Queued', value: _formatDateWithSeconds(task.queuedAt)),
-                if (task.startedAt != null)
-                  _buildInfoRow(isDark,
-                      label: 'Started',
-                      value: _formatDateWithSeconds(task.startedAt!)),
-                if (task.completedAt != null)
-                  _buildInfoRow(isDark,
-                      label: 'Completed',
-                      value: _formatDateWithSeconds(task.completedAt!)),
-                if (task.duration != null)
-                  _buildInfoRow(isDark,
-                      label: 'Duration', value: '${task.duration!.inSeconds}s'),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: Spacing.lg),
-
-          // Result
-          if (result != null) ...[
-            _buildDetailSection(
-              isDark,
-              title: 'Actions Taken',
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (result.actions.isEmpty)
-                    Text(
-                      'No actions taken',
-                      style: TextStyle(
-                        color: isDark
-                            ? BrandColors.nightTextSecondary
-                            : BrandColors.driftwood,
-                      ),
-                    )
-                  else
-                    ...result.actions.map(
-                      (action) => Padding(
-                        padding: const EdgeInsets.only(bottom: Spacing.xs),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Icon(
-                              Icons.check_circle,
-                              size: 16,
-                              color: isDark
-                                  ? BrandColors.nightForest
-                                  : BrandColors.forest,
-                            ),
-                            const SizedBox(width: Spacing.sm),
-                            Expanded(
-                              child: Text(
-                                action,
-                                style: TextStyle(
-                                  color: isDark
-                                      ? BrandColors.nightText
-                                      : BrandColors.charcoal,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: Spacing.lg),
-
-            // Reasoning
-            if (result.reasoning != null) ...[
-              _buildDetailSection(
-                isDark,
-                title: 'Curator Reasoning',
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(Spacing.md),
-                  decoration: BoxDecoration(
-                    color: isDark
-                        ? BrandColors.nightSurface
-                        : BrandColors.stone,
-                    borderRadius: BorderRadius.circular(Radii.md),
-                  ),
-                  child: SelectableText(
-                    result.reasoning!,
-                    style: TextStyle(
-                      fontSize: TypographyTokens.bodySmall,
-                      fontFamily: 'monospace',
-                      color: isDark
-                          ? BrandColors.nightText
-                          : BrandColors.charcoal,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ],
-
-          // Error
-          if (task.error != null) ...[
-            const SizedBox(height: Spacing.lg),
-            _buildDetailSection(
-              isDark,
-              title: 'Error',
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(Spacing.md),
-                decoration: BoxDecoration(
-                  color: BrandColors.warning.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(Radii.md),
-                  border: Border.all(color: BrandColors.warning.withValues(alpha: 0.3)),
-                ),
-                child: SelectableText(
-                  task.error!,
-                  style: TextStyle(
-                    fontSize: TypographyTokens.bodySmall,
-                    color: isDark ? BrandColors.warning : BrandColors.error,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDetailSection(
-    bool isDark, {
-    required String title,
-    required Widget child,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          title,
-          style: TextStyle(
-            fontSize: TypographyTokens.titleSmall,
-            fontWeight: FontWeight.w600,
-            color: isDark ? BrandColors.nightText : BrandColors.charcoal,
-          ),
-        ),
-        const SizedBox(height: Spacing.sm),
-        child,
-      ],
-    );
-  }
-
   Color _getStatusColor(CuratorTaskStatus status) {
     switch (status) {
       case CuratorTaskStatus.pending:
@@ -788,5 +845,13 @@ class _CuratorSessionViewerSheetState
       case CuratorTaskStatus.failed:
         return BrandColors.error;
     }
+  }
+
+  String _formatTime(DateTime dt) {
+    final local = dt.toLocal();
+    final hour = local.hour > 12 ? local.hour - 12 : (local.hour == 0 ? 12 : local.hour);
+    final amPm = local.hour >= 12 ? 'PM' : 'AM';
+    final minute = local.minute.toString().padLeft(2, '0');
+    return '$hour:$minute $amPm';
   }
 }
