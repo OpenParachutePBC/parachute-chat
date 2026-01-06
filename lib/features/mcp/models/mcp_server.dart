@@ -9,6 +9,13 @@ class McpServer {
   final String? description;
   final String displayType;
   final String displayCommand;
+  final bool builtin;
+
+  // Remote server auth fields
+  final String? auth; // 'none', 'bearer', 'oauth'
+  final bool authRequired;
+  final List<String>? scopes;
+  final List<String>? validationErrors;
 
   McpServer({
     required this.name,
@@ -19,6 +26,11 @@ class McpServer {
     this.description,
     String? displayType,
     String? displayCommand,
+    this.builtin = false,
+    this.auth,
+    this.authRequired = false,
+    this.scopes,
+    this.validationErrors,
   })  : displayType = displayType ?? (command != null ? 'stdio' : 'http'),
         displayCommand = displayCommand ??
             (command != null
@@ -35,6 +47,11 @@ class McpServer {
       description: json['_description'] as String?,
       displayType: json['displayType'] as String?,
       displayCommand: json['displayCommand'] as String?,
+      builtin: json['builtin'] as bool? ?? false,
+      auth: json['auth'] as String?,
+      authRequired: json['authRequired'] as bool? ?? false,
+      scopes: (json['scopes'] as List<dynamic>?)?.cast<String>(),
+      validationErrors: (json['validationErrors'] as List<dynamic>?)?.cast<String>(),
     );
   }
 
@@ -45,6 +62,8 @@ class McpServer {
     if (env != null) config['env'] = env;
     if (url != null) config['url'] = url;
     if (description != null) config['_description'] = description;
+    if (auth != null) config['auth'] = auth;
+    if (scopes != null) config['scopes'] = scopes;
     return config;
   }
 
@@ -53,6 +72,15 @@ class McpServer {
 
   /// Whether this is an HTTP-based server
   bool get isHttp => url != null;
+
+  /// Whether this server uses OAuth authentication
+  bool get isOAuth => auth == 'oauth';
+
+  /// Whether this server uses bearer token authentication
+  bool get isBearer => auth == 'bearer';
+
+  /// Whether this server has configuration errors
+  bool get hasValidationErrors => validationErrors?.isNotEmpty ?? false;
 
   @override
   String toString() => 'McpServer($name: $displayType)';

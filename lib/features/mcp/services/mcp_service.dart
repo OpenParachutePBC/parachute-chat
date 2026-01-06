@@ -116,13 +116,18 @@ class McpService {
   }
 
   /// Add an HTTP-based MCP server
+  ///
+  /// The SDK requires `type: "http"` for remote MCP servers.
   Future<McpServer> addHttpServer({
     required String name,
     required String url,
     String? description,
+    Map<String, String>? headers,
   }) async {
     final config = <String, dynamic>{
+      'type': 'http', // Required by Claude SDK for HTTP servers
       'url': url,
+      if (headers != null) 'headers': headers,
       if (description != null) '_description': description,
     };
     return addServer(name, config);
@@ -215,8 +220,250 @@ class McpService {
     }
   }
 
+  // ==========================================================================
+  // OAuth Methods for Remote Servers
+  // ==========================================================================
+
+  /// Get OAuth authentication status for a remote MCP server
+  Future<McpOAuthStatus> getOAuthStatus(String name) async {
+    try {
+      final response = await _client
+          .get(
+            Uri.parse('$baseUrl/api/mcps/$name/oauth/status'),
+            headers: {'Content-Type': 'application/json'},
+          )
+          .timeout(requestTimeout);
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to get OAuth status: ${response.statusCode}');
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return McpOAuthStatus.fromJson(data);
+    } catch (e) {
+      debugPrint('[McpService] Error getting OAuth status for $name: $e');
+      rethrow;
+    }
+  }
+
+  /// Start OAuth flow for a remote MCP server
+  ///
+  /// Returns the authorization URL to open in a browser
+  Future<McpOAuthStartResult> startOAuthFlow(
+    String name, {
+    required String redirectUri,
+    List<String>? scopes,
+  }) async {
+    try {
+      final response = await _client
+          .post(
+            Uri.parse('$baseUrl/api/mcps/$name/oauth/start'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'redirect_uri': redirectUri,
+              if (scopes != null) 'scopes': scopes,
+            }),
+          )
+          .timeout(requestTimeout);
+
+      if (response.statusCode != 200) {
+        final error = jsonDecode(response.body)['detail'] ?? 'Unknown error';
+        throw Exception('Failed to start OAuth flow: $error');
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return McpOAuthStartResult.fromJson(data);
+    } catch (e) {
+      debugPrint('[McpService] Error starting OAuth flow for $name: $e');
+      rethrow;
+    }
+  }
+
+  /// Handle OAuth callback after user authorizes
+  Future<McpOAuthCallbackResult> handleOAuthCallback(
+    String name, {
+    required String code,
+    required String state,
+  }) async {
+    try {
+      final response = await _client
+          .post(
+            Uri.parse('$baseUrl/api/mcps/$name/oauth/callback'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'code': code,
+              'state': state,
+            }),
+          )
+          .timeout(const Duration(seconds: 30)); // Token exchange can take longer
+
+      if (response.statusCode != 200) {
+        final error = jsonDecode(response.body)['detail'] ?? 'Unknown error';
+        throw Exception('OAuth callback failed: $error');
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return McpOAuthCallbackResult.fromJson(data);
+    } catch (e) {
+      debugPrint('[McpService] Error handling OAuth callback for $name: $e');
+      rethrow;
+    }
+  }
+
+  /// Store an API token directly (for bearer auth)
+  Future<bool> storeToken(
+    String name, {
+    required String token,
+    String tokenType = 'Bearer',
+    int? expiresIn,
+  }) async {
+    try {
+      final response = await _client
+          .post(
+            Uri.parse('$baseUrl/api/mcps/$name/oauth/token'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'token': token,
+              'token_type': tokenType,
+              if (expiresIn != null) 'expires_in': expiresIn,
+            }),
+          )
+          .timeout(requestTimeout);
+
+      if (response.statusCode != 200) {
+        final error = jsonDecode(response.body)['detail'] ?? 'Unknown error';
+        throw Exception('Failed to store token: $error');
+      }
+
+      return true;
+    } catch (e) {
+      debugPrint('[McpService] Error storing token for $name: $e');
+      rethrow;
+    }
+  }
+
+  /// Log out from a remote MCP server (delete stored token)
+  Future<bool> logout(String name) async {
+    try {
+      final response = await _client
+          .delete(
+            Uri.parse('$baseUrl/api/mcps/$name/oauth/logout'),
+            headers: {'Content-Type': 'application/json'},
+          )
+          .timeout(requestTimeout);
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to logout: ${response.statusCode}');
+      }
+
+      return true;
+    } catch (e) {
+      debugPrint('[McpService] Error logging out from $name: $e');
+      rethrow;
+    }
+  }
+
   void dispose() {
     _client.close();
+  }
+}
+
+/// OAuth status for a remote MCP server
+class McpOAuthStatus {
+  final String name;
+  final String type;
+  final String? auth;
+  final bool authRequired;
+  final bool authenticated;
+  final bool? expired;
+  final List<String>? scopes;
+  final List<String>? discoveredScopes;
+  final String? expiresAt;
+
+  const McpOAuthStatus({
+    required this.name,
+    required this.type,
+    this.auth,
+    required this.authRequired,
+    required this.authenticated,
+    this.expired,
+    this.scopes,
+    this.discoveredScopes,
+    this.expiresAt,
+  });
+
+  factory McpOAuthStatus.fromJson(Map<String, dynamic> json) {
+    return McpOAuthStatus(
+      name: json['name'] as String,
+      type: json['type'] as String,
+      auth: json['auth'] as String?,
+      authRequired: json['authRequired'] as bool? ?? false,
+      authenticated: json['authenticated'] as bool? ?? false,
+      expired: json['expired'] as bool?,
+      scopes: (json['scopes'] as List<dynamic>?)?.cast<String>(),
+      discoveredScopes: (json['discoveredScopes'] as List<dynamic>?)?.cast<String>(),
+      expiresAt: json['expiresAt'] as String?,
+    );
+  }
+
+  /// Whether this server needs authentication and isn't authenticated yet
+  bool get needsAuth => authRequired && !authenticated;
+
+  /// Whether token is expired but was previously authenticated
+  bool get isExpired => expired ?? false;
+
+  /// Whether this server supports OAuth (vs just API token)
+  bool get supportsOAuth => auth == 'oauth';
+}
+
+/// Result of starting OAuth flow
+class McpOAuthStartResult {
+  final String authorizationUrl;
+  final String state;
+  final String? redirectUri;  // Actual redirect being used (may differ from requested)
+  final bool isOob;  // True if using out-of-band flow (user copies code)
+
+  const McpOAuthStartResult({
+    required this.authorizationUrl,
+    required this.state,
+    this.redirectUri,
+    this.isOob = false,
+  });
+
+  factory McpOAuthStartResult.fromJson(Map<String, dynamic> json) {
+    return McpOAuthStartResult(
+      authorizationUrl: json['authorizationUrl'] as String,
+      state: json['state'] as String,
+      redirectUri: json['redirectUri'] as String?,
+      isOob: json['isOob'] as bool? ?? false,
+    );
+  }
+}
+
+/// Result of OAuth callback
+class McpOAuthCallbackResult {
+  final bool success;
+  final String serverName;
+  final String? tokenType;
+  final String? expiresAt;
+  final List<String>? scopes;
+
+  const McpOAuthCallbackResult({
+    required this.success,
+    required this.serverName,
+    this.tokenType,
+    this.expiresAt,
+    this.scopes,
+  });
+
+  factory McpOAuthCallbackResult.fromJson(Map<String, dynamic> json) {
+    return McpOAuthCallbackResult(
+      success: json['success'] as bool? ?? false,
+      serverName: json['serverName'] as String,
+      tokenType: json['tokenType'] as String?,
+      expiresAt: json['expiresAt'] as String?,
+      scopes: (json['scopes'] as List<dynamic>?)?.cast<String>(),
+    );
   }
 }
 

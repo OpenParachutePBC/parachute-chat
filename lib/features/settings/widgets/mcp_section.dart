@@ -1,11 +1,13 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // For Clipboard
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute_chat/core/theme/design_tokens.dart';
 import 'package:parachute_chat/features/mcp/models/mcp_server.dart';
 import 'package:parachute_chat/features/mcp/providers/mcp_providers.dart';
 import 'package:parachute_chat/features/mcp/services/mcp_service.dart';
+import 'package:url_launcher/url_launcher.dart';
 import './settings_section_header.dart';
 
 /// MCP Servers settings section
@@ -28,7 +30,11 @@ class _McpSectionState extends ConsumerState<McpSection> {
   final _commandController = TextEditingController();
   final _argsController = TextEditingController();
   final _descriptionController = TextEditingController();
+  final _urlController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
+
+  /// Whether editing a remote (HTTP) server vs stdio
+  bool _isRemoteServer = false;
 
   /// Environment variables as a list of key-value pairs for the form
   final List<_EnvVar> _envVars = [];
@@ -48,12 +54,22 @@ class _McpSectionState extends ConsumerState<McpSection> {
   /// Currently loading tools for servers
   final Set<String> _loadingTools = {};
 
+  /// OAuth status for remote servers
+  final Map<String, McpOAuthStatus> _oauthStatus = {};
+
+  /// Currently loading OAuth status
+  final Set<String> _loadingOAuth = {};
+
+  /// Currently connecting OAuth
+  final Set<String> _connectingOAuth = {};
+
   @override
   void dispose() {
     _nameController.dispose();
     _commandController.dispose();
     _argsController.dispose();
     _descriptionController.dispose();
+    _urlController.dispose();
     for (final env in _envVars) {
       env.dispose();
     }
@@ -65,6 +81,7 @@ class _McpSectionState extends ConsumerState<McpSection> {
     _commandController.clear();
     _argsController.clear();
     _descriptionController.clear();
+    _urlController.clear();
     for (final env in _envVars) {
       env.dispose();
     }
@@ -72,6 +89,7 @@ class _McpSectionState extends ConsumerState<McpSection> {
     setState(() {
       _isEditing = false;
       _editingServerName = null;
+      _isRemoteServer = false;
     });
   }
 
@@ -80,6 +98,7 @@ class _McpSectionState extends ConsumerState<McpSection> {
     _commandController.text = server.command ?? '';
     _argsController.text = server.args?.join(' ') ?? '';
     _descriptionController.text = server.description ?? '';
+    _urlController.text = server.url ?? '';
 
     // Load environment variables
     for (final env in _envVars) {
@@ -95,6 +114,7 @@ class _McpSectionState extends ConsumerState<McpSection> {
     setState(() {
       _isEditing = true;
       _editingServerName = server.name;
+      _isRemoteServer = server.isHttp;
     });
   }
 
@@ -263,41 +283,49 @@ class _McpSectionState extends ConsumerState<McpSection> {
         _nameController.text = serverName;
       }
 
-      if (serverConfig['command'] != null) {
-        _commandController.text = serverConfig['command'] as String;
-      }
+      // Check if it's a remote (URL-based) or stdio (command-based) server
+      final isRemote = serverConfig.containsKey('url');
 
-      if (serverConfig['args'] != null) {
-        final args = serverConfig['args'] as List<dynamic>;
-        _argsController.text = args.map((a) => a.toString()).join(' ');
+      if (isRemote) {
+        _urlController.text = serverConfig['url'] as String? ?? '';
+      } else {
+        if (serverConfig['command'] != null) {
+          _commandController.text = serverConfig['command'] as String;
+        }
+
+        if (serverConfig['args'] != null) {
+          final args = serverConfig['args'] as List<dynamic>;
+          _argsController.text = args.map((a) => a.toString()).join(' ');
+        }
+
+        // Load environment variables (only for stdio)
+        if (serverConfig['env'] != null) {
+          final envMap = serverConfig['env'] as Map<String, dynamic>;
+          for (final entry in envMap.entries) {
+            String value = entry.value.toString();
+            // If value is a placeholder like ${VAR} or a dummy value, leave it empty
+            if (value.startsWith(r'${') && value.endsWith('}')) {
+              value = ''; // User needs to fill this in
+            } else if (value == 'your-token-here' ||
+                value == 'your-api-key-here' ||
+                value == 'YOUR_API_KEY' ||
+                value.toLowerCase().contains('your-') ||
+                value.toLowerCase().contains('your_')) {
+              value = ''; // Common placeholder values
+            }
+            _envVars.add(_EnvVar(key: entry.key, value: value));
+          }
+        }
       }
 
       if (serverConfig['_description'] != null) {
         _descriptionController.text = serverConfig['_description'] as String;
       }
 
-      // Load environment variables
-      if (serverConfig['env'] != null) {
-        final envMap = serverConfig['env'] as Map<String, dynamic>;
-        for (final entry in envMap.entries) {
-          String value = entry.value.toString();
-          // If value is a placeholder like ${VAR} or a dummy value, leave it empty
-          if (value.startsWith(r'${') && value.endsWith('}')) {
-            value = ''; // User needs to fill this in
-          } else if (value == 'your-token-here' ||
-              value == 'your-api-key-here' ||
-              value == 'YOUR_API_KEY' ||
-              value.toLowerCase().contains('your-') ||
-              value.toLowerCase().contains('your_')) {
-            value = ''; // Common placeholder values
-          }
-          _envVars.add(_EnvVar(key: entry.key, value: value));
-        }
-      }
-
       setState(() {
         _isEditing = true;
         _editingServerName = null;
+        _isRemoteServer = isRemote;
       });
 
       if (mounted) {
@@ -326,24 +354,7 @@ class _McpSectionState extends ConsumerState<McpSection> {
     if (!_formKey.currentState!.validate()) return;
 
     final name = _nameController.text.trim();
-    final command = _commandController.text.trim();
-    final argsText = _argsController.text.trim();
     final description = _descriptionController.text.trim();
-    final args = argsText.isEmpty
-        ? <String>[]
-        : argsText.split(' ').where((s) => s.isNotEmpty).toList();
-
-    // Build environment variables map from non-empty entries
-    final Map<String, String>? env = _envVars.isEmpty
-        ? null
-        : Map.fromEntries(
-            _envVars
-                .where((e) => e.keyController.text.trim().isNotEmpty)
-                .map((e) => MapEntry(
-                      e.keyController.text.trim(),
-                      e.valueController.text.trim(),
-                    )),
-          );
 
     final isNew = _editingServerName == null;
     final oldName = _editingServerName;
@@ -354,14 +365,44 @@ class _McpSectionState extends ConsumerState<McpSection> {
         await removeMcpServer(ref, oldName);
       }
 
-      await addStdioMcpServer(
-        ref,
-        name: name,
-        command: command,
-        args: args,
-        description: description.isEmpty ? null : description,
-        env: env?.isEmpty == true ? null : env,
-      );
+      if (_isRemoteServer) {
+        // Remote (HTTP) server
+        final url = _urlController.text.trim();
+        await addHttpMcpServer(
+          ref,
+          name: name,
+          url: url,
+          description: description.isEmpty ? null : description,
+        );
+      } else {
+        // Stdio server
+        final command = _commandController.text.trim();
+        final argsText = _argsController.text.trim();
+        final args = argsText.isEmpty
+            ? <String>[]
+            : argsText.split(' ').where((s) => s.isNotEmpty).toList();
+
+        // Build environment variables map from non-empty entries
+        final Map<String, String>? env = _envVars.isEmpty
+            ? null
+            : Map.fromEntries(
+                _envVars
+                    .where((e) => e.keyController.text.trim().isNotEmpty)
+                    .map((e) => MapEntry(
+                          e.keyController.text.trim(),
+                          e.valueController.text.trim(),
+                        )),
+              );
+
+        await addStdioMcpServer(
+          ref,
+          name: name,
+          command: command,
+          args: args,
+          description: description.isEmpty ? null : description,
+          env: env?.isEmpty == true ? null : env,
+        );
+      }
 
       _resetForm();
 
@@ -472,6 +513,412 @@ class _McpSectionState extends ConsumerState<McpSection> {
         setState(() {
           _loadingTools.remove(name);
         });
+      }
+    }
+  }
+
+  /// Load OAuth status for a remote server
+  Future<void> _loadOAuthStatus(String name) async {
+    if (_loadingOAuth.contains(name)) return;
+
+    setState(() {
+      _loadingOAuth.add(name);
+    });
+
+    try {
+      final service = ref.read(mcpServiceProvider);
+      final status = await service.getOAuthStatus(name);
+
+      if (mounted) {
+        setState(() {
+          _oauthStatus[name] = status;
+          _loadingOAuth.remove(name);
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _loadingOAuth.remove(name);
+        });
+      }
+    }
+  }
+
+  /// Start OAuth flow for a remote server
+  ///
+  /// Uses localhost redirect. After authorization, the browser will try to
+  /// redirect to localhost (which won't load), and the user copies the URL
+  /// containing the authorization code.
+  Future<void> _startOAuthFlow(McpServer server) async {
+    if (_connectingOAuth.contains(server.name)) return;
+
+    setState(() {
+      _connectingOAuth.add(server.name);
+    });
+
+    try {
+      final service = ref.read(mcpServiceProvider);
+
+      // Use localhost redirect - browser will fail to load it, but the URL
+      // will contain the authorization code for the user to copy
+      const redirectUri = 'http://localhost:3333/oauth/callback';
+
+      final result = await service.startOAuthFlow(
+        server.name,
+        redirectUri: redirectUri,
+        scopes: server.scopes,
+      );
+
+      // Show OAuth flow dialog
+      if (mounted) {
+        final oauthResult = await _showOAuthFlow(
+          serverName: server.name,
+          authUrl: result.authorizationUrl,
+          state: result.state,
+          isOob: result.isOob,
+        );
+
+        if (oauthResult != null && oauthResult.success) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Successfully connected to ${server.name}!'),
+              backgroundColor: BrandColors.success,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('OAuth error: $e'),
+            backgroundColor: BrandColors.error,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _connectingOAuth.remove(server.name);
+        });
+        // Refresh status regardless of outcome
+        await _loadOAuthStatus(server.name);
+      }
+    }
+  }
+
+  /// Show OAuth flow - opens browser and handles code entry
+  Future<McpOAuthCallbackResult?> _showOAuthFlow({
+    required String serverName,
+    required String authUrl,
+    required String state,
+    required bool isOob,
+  }) async {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final codeController = TextEditingController();
+
+    // Open browser with the auth URL
+    final uri = Uri.parse(authUrl);
+    debugPrint('[OAuth] Attempting to launch URL: $authUrl');
+
+    try {
+      final canLaunch = await canLaunchUrl(uri);
+      debugPrint('[OAuth] canLaunchUrl: $canLaunch');
+
+      if (canLaunch) {
+        final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+        debugPrint('[OAuth] launchUrl result: $launched');
+        if (!launched) {
+          // Try with platform default mode
+          debugPrint('[OAuth] Trying with platformDefault mode...');
+          await launchUrl(uri, mode: LaunchMode.platformDefault);
+        }
+      } else {
+        debugPrint('[OAuth] Cannot launch URL, trying anyway...');
+        // Some platforms return false for canLaunchUrl but still work
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      }
+    } catch (e) {
+      debugPrint('[OAuth] Error launching URL: $e');
+      // Show error but continue to show dialog - user can manually open URL
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not open browser. Please open this URL manually:\n$authUrl'),
+            backgroundColor: BrandColors.warning,
+            duration: const Duration(seconds: 10),
+          ),
+        );
+      }
+    }
+
+    // Show dialog to collect the authorization code
+    // For OOB flow: just paste the code shown on the page
+    // For localhost redirect: paste the whole URL from address bar
+    final result = await showDialog<String?>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.login, color: BrandColors.turquoise),
+            SizedBox(width: Spacing.sm),
+            Expanded(child: Text('Connect to $serverName')),
+          ],
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                isOob
+                    ? 'After authorizing in your browser, you\'ll see an authorization code. '
+                      'Copy that code and paste it here:'
+                    : 'After authorizing, your browser will try to go to a page that won\'t load '
+                      '(starting with "localhost"). That\'s expected! Copy the entire URL from '
+                      'your browser\'s address bar and paste it here:',
+                style: TextStyle(
+                  fontSize: TypographyTokens.bodySmall,
+                  color: isDark
+                      ? BrandColors.nightTextSecondary
+                      : BrandColors.driftwood,
+                ),
+              ),
+              SizedBox(height: Spacing.md),
+              // Button to copy/open URL if browser didn't launch
+              OutlinedButton.icon(
+                onPressed: () async {
+                  await Clipboard.setData(ClipboardData(text: authUrl));
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('URL copied to clipboard'),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                  }
+                  // Also try to launch again
+                  try {
+                    await launchUrl(Uri.parse(authUrl), mode: LaunchMode.externalApplication);
+                  } catch (_) {}
+                },
+                icon: const Icon(Icons.open_in_browser, size: 16),
+                label: const Text('Open/Copy Auth URL'),
+              ),
+              SizedBox(height: Spacing.md),
+              TextField(
+                controller: codeController,
+                decoration: InputDecoration(
+                  labelText: isOob ? 'Authorization Code' : 'Callback URL',
+                  hintText: isOob ? 'Paste the code here...' : 'http://localhost:3333/oauth/callback?code=...',
+                  border: const OutlineInputBorder(),
+                  filled: true,
+                  fillColor: isDark
+                      ? BrandColors.nightSurface
+                      : BrandColors.cream.withValues(alpha: 0.5),
+                ),
+                maxLines: isOob ? 1 : 2,
+                style: const TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                ),
+              ),
+              if (!isOob) ...[
+                SizedBox(height: Spacing.sm),
+                Text(
+                  'The URL will look like: http://localhost:3333/oauth/callback?code=ABC123&state=XYZ',
+                  style: TextStyle(
+                    fontSize: TypographyTokens.labelSmall,
+                    color: isDark
+                        ? BrandColors.nightTextSecondary.withValues(alpha: 0.7)
+                        : BrandColors.driftwood.withValues(alpha: 0.7),
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, null),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, codeController.text.trim()),
+            style: FilledButton.styleFrom(backgroundColor: BrandColors.forest),
+            child: const Text('Complete'),
+          ),
+        ],
+      ),
+    );
+
+    codeController.dispose();
+
+    if (result == null || result.isEmpty) {
+      return null;
+    }
+
+    // Extract the authorization code
+    try {
+      String code;
+
+      if (isOob) {
+        // OOB flow: user pasted just the code
+        code = result;
+      } else {
+        // Localhost redirect: user pasted the full URL
+        final callbackUri = Uri.parse(result);
+        final urlCode = callbackUri.queryParameters['code'];
+        final returnedState = callbackUri.queryParameters['state'];
+        final error = callbackUri.queryParameters['error'];
+
+        if (error != null) {
+          throw Exception('OAuth error: $error');
+        }
+
+        if (urlCode == null || urlCode.isEmpty) {
+          throw Exception('No authorization code in callback URL');
+        }
+
+        // Verify state matches (CSRF protection)
+        if (returnedState != state) {
+          throw Exception('State mismatch - possible CSRF attack');
+        }
+
+        code = urlCode;
+      }
+
+      // Forward the code to our actual server to exchange for tokens
+      final service = ref.read(mcpServiceProvider);
+      return await service.handleOAuthCallback(
+        serverName,
+        code: code,
+        state: state,
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to complete OAuth: $e'),
+            backgroundColor: BrandColors.error,
+          ),
+        );
+      }
+      return null;
+    }
+  }
+
+  /// Disconnect from a remote server
+  Future<void> _disconnectServer(String name) async {
+    try {
+      final service = ref.read(mcpServiceProvider);
+      await service.logout(name);
+
+      // Remove cached status
+      setState(() {
+        _oauthStatus.remove(name);
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Disconnected from $name'),
+            backgroundColor: BrandColors.success,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error disconnecting: $e'),
+            backgroundColor: BrandColors.error,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Show dialog to enter API token for bearer auth
+  Future<void> _showTokenDialog(McpServer server) async {
+    final tokenController = TextEditingController();
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    final token = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Add API Token for ${server.name}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Enter your API token or key:',
+              style: TextStyle(
+                fontSize: TypographyTokens.bodySmall,
+                color: isDark
+                    ? BrandColors.nightTextSecondary
+                    : BrandColors.driftwood,
+              ),
+            ),
+            SizedBox(height: Spacing.md),
+            TextField(
+              controller: tokenController,
+              obscureText: true,
+              decoration: InputDecoration(
+                labelText: 'API Token',
+                hintText: 'sk-...',
+                border: const OutlineInputBorder(),
+                filled: true,
+                fillColor: isDark
+                    ? BrandColors.nightSurface
+                    : BrandColors.cream.withValues(alpha: 0.5),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, tokenController.text.trim()),
+            style: FilledButton.styleFrom(backgroundColor: BrandColors.forest),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+
+    if (token == null || token.isEmpty) return;
+
+    try {
+      final service = ref.read(mcpServiceProvider);
+      await service.storeToken(server.name, token: token);
+
+      // Refresh OAuth status
+      await _loadOAuthStatus(server.name);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Token saved for ${server.name}'),
+            backgroundColor: BrandColors.success,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error saving token: $e'),
+            backgroundColor: BrandColors.error,
+          ),
+        );
       }
     }
   }
@@ -713,6 +1160,20 @@ class _McpSectionState extends ConsumerState<McpSection> {
     final isLoadingTools = _loadingTools.contains(server.name);
     final tools = _serverTools[server.name];
 
+    // OAuth status for remote servers
+    final oauthStatus = _oauthStatus[server.name];
+    final isLoadingOAuth = _loadingOAuth.contains(server.name);
+    final isConnectingOAuth = _connectingOAuth.contains(server.name);
+
+    // Load OAuth status on first render if it's a remote server
+    // This will discover OAuth support even if not explicitly configured
+    if (server.isHttp && !_oauthStatus.containsKey(server.name) && !_loadingOAuth.contains(server.name)) {
+      // Schedule this after build
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _loadOAuthStatus(server.name);
+      });
+    }
+
     // Determine border color based on status
     Color borderColor;
     if (status != null) {
@@ -769,17 +1230,42 @@ class _McpSectionState extends ConsumerState<McpSection> {
                           width: 40,
                           height: 40,
                           decoration: BoxDecoration(
-                            color: BrandColors.forest.withValues(alpha: 0.1),
+                            color: server.isHttp
+                                ? BrandColors.turquoise.withValues(alpha: 0.1)
+                                : BrandColors.forest.withValues(alpha: 0.1),
                             borderRadius: BorderRadius.circular(Radii.sm),
                           ),
                           child: Icon(
                             server.isStdio ? Icons.terminal : Icons.cloud,
-                            color: BrandColors.forest,
+                            color: server.isHttp ? BrandColors.turquoise : BrandColors.forest,
                             size: 20,
                           ),
                         ),
-                        // Status indicator dot
-                        if (status != null)
+                        // Status indicator dot (for stdio) or OAuth indicator (for http)
+                        if (server.isHttp && server.authRequired)
+                          Positioned(
+                            right: 0,
+                            top: 0,
+                            child: Container(
+                              width: 12,
+                              height: 12,
+                              decoration: BoxDecoration(
+                                color: oauthStatus?.authenticated == true
+                                    ? BrandColors.success
+                                    : BrandColors.warning,
+                                shape: BoxShape.circle,
+                                border: Border.all(color: cardColor, width: 2),
+                              ),
+                              child: Icon(
+                                oauthStatus?.authenticated == true
+                                    ? Icons.check
+                                    : Icons.key,
+                                size: 8,
+                                color: Colors.white,
+                              ),
+                            ),
+                          )
+                        else if (status != null)
                           Positioned(
                             right: 0,
                             top: 0,
@@ -881,6 +1367,55 @@ class _McpSectionState extends ConsumerState<McpSection> {
                               overflow: TextOverflow.ellipsis,
                             ),
                           ],
+                          // Show auth status for remote servers that need auth
+                          if (server.isHttp && (server.authRequired || oauthStatus?.authRequired == true)) ...[
+                            SizedBox(height: Spacing.xs),
+                            Row(
+                              children: [
+                                Icon(
+                                  oauthStatus?.authenticated == true
+                                      ? Icons.check_circle_outline
+                                      : Icons.warning_amber_outlined,
+                                  size: 14,
+                                  color: oauthStatus?.authenticated == true
+                                      ? BrandColors.success
+                                      : BrandColors.warning,
+                                ),
+                                SizedBox(width: 4),
+                                Text(
+                                  isLoadingOAuth
+                                      ? 'Checking auth...'
+                                      : oauthStatus?.authenticated == true
+                                          ? oauthStatus?.isExpired == true
+                                              ? 'Token expired'
+                                              : 'Connected'
+                                          : (oauthStatus?.supportsOAuth ?? server.isOAuth)
+                                              ? 'OAuth required'
+                                              : 'Token required',
+                                  style: TextStyle(
+                                    fontSize: TypographyTokens.labelSmall,
+                                    color: oauthStatus?.authenticated == true
+                                        ? BrandColors.success
+                                        : BrandColors.warning,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                          // Show validation errors
+                          if (server.hasValidationErrors) ...[
+                            SizedBox(height: Spacing.xs),
+                            Text(
+                              '⚠️ ${server.validationErrors!.first}',
+                              style: TextStyle(
+                                fontSize: TypographyTokens.labelSmall,
+                                color: BrandColors.error,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
                           // Show hint if available
                           if (status?.hint != null) ...[
                             SizedBox(height: Spacing.xs),
@@ -906,6 +1441,39 @@ class _McpSectionState extends ConsumerState<McpSection> {
                     Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
+                        // OAuth Connect/Disconnect button for remote servers
+                        // Show for HTTP servers that either have authRequired or have discovered OAuth
+                        if (server.isHttp && (server.authRequired || oauthStatus?.authRequired == true)) ...[
+                          if (isConnectingOAuth)
+                            SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation(BrandColors.turquoise),
+                              ),
+                            )
+                          else if (oauthStatus?.authenticated == true)
+                            IconButton(
+                              icon: Icon(Icons.logout,
+                                  color: BrandColors.warning, size: 20),
+                              onPressed: () => _disconnectServer(server.name),
+                              tooltip: 'Disconnect',
+                              visualDensity: VisualDensity.compact,
+                            )
+                          else
+                            IconButton(
+                              icon: Icon(Icons.login,
+                                  color: BrandColors.turquoise, size: 20),
+                              onPressed: () => (oauthStatus?.supportsOAuth ?? server.isOAuth)
+                                  ? _startOAuthFlow(server)
+                                  : _showTokenDialog(server),
+                              tooltip: (oauthStatus?.supportsOAuth ?? server.isOAuth)
+                                  ? 'Connect with OAuth'
+                                  : 'Add API Token',
+                              visualDensity: VisualDensity.compact,
+                            ),
+                        ],
                         // Test button
                         isTesting
                             ? SizedBox(
@@ -923,20 +1491,24 @@ class _McpSectionState extends ConsumerState<McpSection> {
                                 tooltip: 'Test server',
                                 visualDensity: VisualDensity.compact,
                               ),
-                        IconButton(
-                          icon: Icon(Icons.edit_outlined,
-                              color: BrandColors.turquoise, size: 20),
-                          onPressed: () => _startEditing(server),
-                          tooltip: 'Edit',
-                          visualDensity: VisualDensity.compact,
-                        ),
-                        IconButton(
-                          icon: Icon(Icons.delete_outline,
-                              color: BrandColors.error, size: 20),
-                          onPressed: () => _removeServer(server.name),
-                          tooltip: 'Remove',
-                          visualDensity: VisualDensity.compact,
-                        ),
+                        // Don't show edit for built-in or remote servers (config is different)
+                        if (!server.builtin && server.isStdio)
+                          IconButton(
+                            icon: Icon(Icons.edit_outlined,
+                                color: BrandColors.turquoise, size: 20),
+                            onPressed: () => _startEditing(server),
+                            tooltip: 'Edit',
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        // Don't show delete for built-in servers
+                        if (!server.builtin)
+                          IconButton(
+                            icon: Icon(Icons.delete_outline,
+                                color: BrandColors.error, size: 20),
+                            onPressed: () => _removeServer(server.name),
+                            tooltip: 'Remove',
+                            visualDensity: VisualDensity.compact,
+                          ),
                       ],
                     ),
                   ],
@@ -1168,11 +1740,55 @@ class _McpSectionState extends ConsumerState<McpSection> {
               ],
             ),
             SizedBox(height: Spacing.lg),
+
+            // Server type toggle (only for new servers)
+            if (isNew) ...[
+              Row(
+                children: [
+                  Text(
+                    'Server Type:',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w500,
+                      fontSize: TypographyTokens.bodySmall,
+                      color: isDark
+                          ? BrandColors.nightTextSecondary
+                          : BrandColors.driftwood,
+                    ),
+                  ),
+                  SizedBox(width: Spacing.md),
+                  SegmentedButton<bool>(
+                    segments: const [
+                      ButtonSegment(
+                        value: false,
+                        label: Text('Local (stdio)'),
+                        icon: Icon(Icons.terminal, size: 16),
+                      ),
+                      ButtonSegment(
+                        value: true,
+                        label: Text('Remote (URL)'),
+                        icon: Icon(Icons.cloud, size: 16),
+                      ),
+                    ],
+                    selected: {_isRemoteServer},
+                    onSelectionChanged: (selected) {
+                      setState(() {
+                        _isRemoteServer = selected.first;
+                      });
+                    },
+                    style: ButtonStyle(
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ),
+                ],
+              ),
+              SizedBox(height: Spacing.lg),
+            ],
+
             TextFormField(
               controller: _nameController,
               decoration: InputDecoration(
                 labelText: 'Server Name',
-                hintText: 'e.g., glif, filesystem',
+                hintText: 'e.g., glif, tally',
                 prefixIcon: const Icon(Icons.label_outline),
                 border: const OutlineInputBorder(),
                 filled: true,
@@ -1192,40 +1808,102 @@ class _McpSectionState extends ConsumerState<McpSection> {
               },
             ),
             SizedBox(height: Spacing.md),
-            TextFormField(
-              controller: _commandController,
-              decoration: InputDecoration(
-                labelText: 'Command',
-                hintText: 'e.g., npx, node, python',
-                prefixIcon: const Icon(Icons.terminal),
-                border: const OutlineInputBorder(),
-                filled: true,
-                fillColor: isDark
-                    ? BrandColors.nightSurface
-                    : BrandColors.cream.withValues(alpha: 0.5),
+
+            // Show different fields based on server type
+            if (_isRemoteServer) ...[
+              // Remote server: URL field
+              TextFormField(
+                controller: _urlController,
+                decoration: InputDecoration(
+                  labelText: 'Server URL',
+                  hintText: 'https://mcp.example.com',
+                  prefixIcon: const Icon(Icons.link),
+                  border: const OutlineInputBorder(),
+                  filled: true,
+                  fillColor: isDark
+                      ? BrandColors.nightSurface
+                      : BrandColors.cream.withValues(alpha: 0.5),
+                  helperText: 'Remote MCP server endpoint',
+                ),
+                validator: (value) {
+                  if (!_isRemoteServer) return null;
+                  if (value == null || value.trim().isEmpty) {
+                    return 'URL is required for remote servers';
+                  }
+                  final uri = Uri.tryParse(value.trim());
+                  if (uri == null || !uri.hasScheme || !uri.hasAuthority) {
+                    return 'Enter a valid URL (https://...)';
+                  }
+                  return null;
+                },
               ),
-              validator: (value) {
-                if (value == null || value.trim().isEmpty) {
-                  return 'Command is required';
-                }
-                return null;
-              },
-            ),
-            SizedBox(height: Spacing.md),
-            TextFormField(
-              controller: _argsController,
-              decoration: InputDecoration(
-                labelText: 'Arguments',
-                hintText: 'e.g., -y @glifxyz/glif-mcp-server@latest',
-                prefixIcon: const Icon(Icons.code),
-                border: const OutlineInputBorder(),
-                filled: true,
-                fillColor: isDark
-                    ? BrandColors.nightSurface
-                    : BrandColors.cream.withValues(alpha: 0.5),
-                helperText: 'Space-separated arguments',
+              SizedBox(height: Spacing.sm),
+              Container(
+                padding: EdgeInsets.all(Spacing.sm),
+                decoration: BoxDecoration(
+                  color: BrandColors.turquoise.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(Radii.sm),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.info_outline,
+                      size: 16,
+                      color: BrandColors.turquoise,
+                    ),
+                    SizedBox(width: Spacing.sm),
+                    Expanded(
+                      child: Text(
+                        'After adding, you\'ll be prompted to connect via OAuth or API key.',
+                        style: TextStyle(
+                          fontSize: TypographyTokens.labelSmall,
+                          color: isDark
+                              ? BrandColors.nightTextSecondary
+                              : BrandColors.driftwood,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
+            ] else ...[
+              // Stdio server: command + args
+              TextFormField(
+                controller: _commandController,
+                decoration: InputDecoration(
+                  labelText: 'Command',
+                  hintText: 'e.g., npx, node, python',
+                  prefixIcon: const Icon(Icons.terminal),
+                  border: const OutlineInputBorder(),
+                  filled: true,
+                  fillColor: isDark
+                      ? BrandColors.nightSurface
+                      : BrandColors.cream.withValues(alpha: 0.5),
+                ),
+                validator: (value) {
+                  if (_isRemoteServer) return null;
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Command is required';
+                  }
+                  return null;
+                },
+              ),
+              SizedBox(height: Spacing.md),
+              TextFormField(
+                controller: _argsController,
+                decoration: InputDecoration(
+                  labelText: 'Arguments',
+                  hintText: 'e.g., -y @glifxyz/glif-mcp-server@latest',
+                  prefixIcon: const Icon(Icons.code),
+                  border: const OutlineInputBorder(),
+                  filled: true,
+                  fillColor: isDark
+                      ? BrandColors.nightSurface
+                      : BrandColors.cream.withValues(alpha: 0.5),
+                  helperText: 'Space-separated arguments',
+                ),
+              ),
+            ],
             SizedBox(height: Spacing.md),
             TextFormField(
               controller: _descriptionController,
@@ -1240,10 +1918,12 @@ class _McpSectionState extends ConsumerState<McpSection> {
                     : BrandColors.cream.withValues(alpha: 0.5),
               ),
             ),
-            SizedBox(height: Spacing.lg),
 
-            // Environment Variables section
-            _buildEnvVarsSection(isDark),
+            // Environment Variables section (only for stdio servers)
+            if (!_isRemoteServer) ...[
+              SizedBox(height: Spacing.lg),
+              _buildEnvVarsSection(isDark),
+            ],
 
             SizedBox(height: Spacing.lg),
             Row(

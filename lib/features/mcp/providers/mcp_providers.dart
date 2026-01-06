@@ -94,6 +94,23 @@ Future<McpServer> addStdioMcpServer(
   return result;
 }
 
+/// Add an HTTP-based MCP server (remote)
+Future<McpServer> addHttpMcpServer(
+  WidgetRef ref, {
+  required String name,
+  required String url,
+  String? description,
+}) async {
+  final service = ref.read(mcpServiceProvider);
+  final result = await service.addHttpServer(
+    name: name,
+    url: url,
+    description: description,
+  );
+  ref.invalidate(mcpServersProvider);
+  return result;
+}
+
 /// Remove an MCP server and refresh the list
 Future<bool> removeMcpServer(WidgetRef ref, String name) async {
   final service = ref.read(mcpServiceProvider);
