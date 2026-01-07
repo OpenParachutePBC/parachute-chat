@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 import '../models/chat_session.dart';
 import '../models/chat_message.dart';
 import '../models/context_file.dart';
+import '../models/context_folder.dart';
 import '../models/stream_event.dart';
 import '../models/session_resume_info.dart';
 import '../models/prompt_metadata.dart';
@@ -472,8 +473,10 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
       // Just use it directly for all API calls
       debugPrint('[ChatMessagesNotifier] Loading session with ID: $sessionId (usedTranscript: $usedTranscript, serverActive: $serverHasActiveStream)');
 
-      // Preserve the model from current state if we have one (set during streaming)
+      // Preserve state that should persist across session reloads
       final currentModel = state.model;
+      final currentContexts = state.selectedContexts;
+      final contextsExplicit = state.contextsExplicitlySet;
 
       state = ChatMessagesState(
         messages: loadedMessages,
@@ -488,6 +491,8 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         model: currentModel, // Preserve model from streaming
         transcriptSegments: segmentMetadata,
         transcriptSegmentCount: segmentCount,
+        selectedContexts: currentContexts, // Preserve user-selected context
+        contextsExplicitlySet: contextsExplicit, // Preserve explicit context flag
       );
 
       // If there's an active background stream, reattach to receive updates
@@ -827,6 +832,35 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         );
         break;
 
+      case StreamEventType.userMessage:
+        // User message event - add if not already present
+        // This ensures the user's message is visible when rejoining mid-stream
+        final userContent = event.userMessageContent;
+        debugPrint('[ChatMessagesNotifier] Join stream: GOT user_message event!');
+        debugPrint('[ChatMessagesNotifier] Join stream: content="${userContent?.substring(0, (userContent?.length ?? 0) > 50 ? 50 : (userContent?.length ?? 0))}..."');
+        debugPrint('[ChatMessagesNotifier] Join stream: Current messages count=${state.messages.length}');
+        if (userContent != null && userContent.isNotEmpty) {
+          // Check if we already have a user message with this exact content (avoid duplicates)
+          final hasUserMessage = state.messages.any((m) =>
+              m.role == MessageRole.user && m.textContent == userContent);
+          debugPrint('[ChatMessagesNotifier] Join stream: hasUserMessage=$hasUserMessage');
+          if (!hasUserMessage) {
+            debugPrint('[ChatMessagesNotifier] Join stream: ADDING user message to END of list');
+            final userMessage = ChatMessage.user(
+              sessionId: sessionId,
+              text: userContent,
+            );
+            // Add user message at the END (after existing messages, before assistant response)
+            final updatedMessages = [...state.messages, userMessage];
+            debugPrint('[ChatMessagesNotifier] Join stream: New messages count=${updatedMessages.length}');
+            debugPrint('[ChatMessagesNotifier] Join stream: Last message role=${updatedMessages.last.role}');
+            state = state.copyWith(
+              messages: updatedMessages,
+            );
+          }
+        }
+        break;
+
       case StreamEventType.init:
       case StreamEventType.sessionUnavailable:
       case StreamEventType.unknown:
@@ -847,6 +881,10 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
     if (content.isEmpty) return;
 
     final messages = List<ChatMessage>.from(state.messages);
+    debugPrint('[ChatMessagesNotifier] _updateOrAddAssistantMessage: messages.length=${messages.length}');
+    if (messages.isNotEmpty) {
+      debugPrint('[ChatMessagesNotifier] _updateOrAddAssistantMessage: first.role=${messages.first.role}, last.role=${messages.last.role}');
+    }
 
     // Check if the last message is an assistant message that's streaming
     if (messages.isNotEmpty &&
@@ -1045,7 +1083,10 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
     if (state.isStreaming) return;
 
     // Generate or use existing session ID
-    final sessionId = state.sessionId ?? _uuid.v4();
+    final existingSessionId = state.sessionId;
+    final sessionId = existingSessionId ?? _uuid.v4();
+    final isNewSession = existingSessionId == null;
+    debugPrint('[ChatMessagesNotifier] sendMessage: existingSessionId=$existingSessionId, using=$sessionId, isNew=$isNewSession');
 
     // Build display text including attachment info
     String displayText = message;
@@ -1182,13 +1223,28 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         switch (event.type) {
           case StreamEventType.session:
             // Server may return a different session ID (for resumed sessions)
-            actualSessionId = event.sessionId;
-            if (actualSessionId != null && actualSessionId.isNotEmpty && actualSessionId != sessionId) {
-              // Update session ID if server assigned a different one
-              debugPrint('[ChatMessagesNotifier] Session event has server ID: $actualSessionId (was: $sessionId)');
-              _ref.read(currentSessionIdProvider.notifier).state = actualSessionId;
-              // ALSO update state.sessionId so future sendMessage calls use the correct ID
-              state = state.copyWith(sessionId: actualSessionId);
+            // For new sessions, this will be null - real ID comes in done event
+            final eventSessionId = event.sessionId;
+            // Validate session ID - reject "pending" or empty values
+            final isValidEventSessionId = eventSessionId != null &&
+                eventSessionId.isNotEmpty &&
+                eventSessionId != 'pending';
+
+            if (isValidEventSessionId) {
+              actualSessionId = eventSessionId;
+              if (eventSessionId != sessionId) {
+                // Update session ID if server assigned a different one
+                debugPrint('[ChatMessagesNotifier] Session event has server ID: $actualSessionId (was: $sessionId)');
+                _ref.read(currentSessionIdProvider.notifier).state = actualSessionId;
+                // ALSO update state.sessionId so future sendMessage calls use the correct ID
+                state = state.copyWith(sessionId: actualSessionId);
+              }
+              // Refresh sessions list now that we have a valid session ID
+              // (The session should now exist in the server's database)
+              _ref.invalidate(chatSessionsProvider);
+            } else {
+              debugPrint('[ChatMessagesNotifier] Session event has no valid session ID (new session) - will get ID from done event');
+              // Don't refresh session list yet - session not created on server
             }
             // Capture session title if present
             final sessionTitle = event.sessionTitle;
@@ -1204,9 +1260,6 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
                   'messagesInjected: ${resumeInfo.messagesInjected})');
               state = state.copyWith(sessionResumeInfo: resumeInfo);
             }
-            // Refresh sessions list immediately so new chats appear right away
-            // (Previously only refreshed on 'done' event, so chats wouldn't show until complete)
-            _ref.invalidate(chatSessionsProvider);
             break;
 
           case StreamEventType.model:
@@ -1312,12 +1365,19 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
 
               // CRITICAL: Capture session ID from done event (for new sessions, this is the first time we get the real ID)
               final doneSessionId = event.sessionId;
-              if (doneSessionId != null && doneSessionId.isNotEmpty && doneSessionId != actualSessionId) {
+              // Validate session ID - reject "pending" or empty values
+              final isValidSessionId = doneSessionId != null &&
+                  doneSessionId.isNotEmpty &&
+                  doneSessionId != 'pending';
+
+              if (isValidSessionId && doneSessionId != actualSessionId) {
                 debugPrint('[ChatMessagesNotifier] Done event has new session ID: $doneSessionId (was: $actualSessionId)');
                 actualSessionId = doneSessionId;
                 _ref.read(currentSessionIdProvider.notifier).state = doneSessionId;
                 // ALSO update state.sessionId so future sendMessage calls use the correct ID
                 state = state.copyWith(sessionId: doneSessionId);
+              } else if (!isValidSessionId) {
+                debugPrint('[ChatMessagesNotifier] WARNING: Done event has invalid session ID: $doneSessionId - keeping current: ${state.sessionId}');
               }
 
               // Capture session title if present in done event
@@ -1402,6 +1462,11 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
               loadSession(actualSessionId ?? sessionId);
             }
             return; // Exit the stream loop
+
+          case StreamEventType.userMessage:
+            // User message event - we already added it locally, so ignore
+            debugPrint('[ChatMessagesNotifier] Received user_message event (already displayed locally)');
+            break;
 
           case StreamEventType.init:
           case StreamEventType.unknown:
@@ -1683,6 +1748,62 @@ final availableContextsProvider = FutureProvider<List<ContextFile>>((ref) async 
 /// Users can select contexts from the new chat sheet before starting.
 final selectedContextsProvider = StateProvider<List<String>>((ref) {
   return []; // Start with no contexts - user can select from available files
+});
+
+// ============================================================
+// Context Folders (AGENTS.md hierarchy)
+// ============================================================
+
+/// Provider for available context folders
+///
+/// Fetches folders with AGENTS.md or CLAUDE.md files that can be
+/// selected as context for a session.
+final contextFoldersProvider = FutureProvider<List<ContextFolder>>((ref) async {
+  final service = ref.watch(chatServiceProvider);
+  try {
+    return await service.getContextFolders();
+  } catch (e) {
+    debugPrint('[ChatProviders] Error loading context folders: $e');
+    return []; // Graceful degradation
+  }
+});
+
+/// Provider for selected context folder paths for new chats
+///
+/// Default: [""] to include root AGENTS.md (Parachute context)
+/// Paths are folder paths relative to vault (e.g., "Projects/parachute")
+final selectedContextFoldersProvider = StateProvider<List<String>>((ref) {
+  return [""]; // Default to root AGENTS.md (Parachute context)
+});
+
+/// Provider to get context chain for selected folders
+///
+/// Shows all AGENTS.md files that will be loaded, including parent chain.
+/// Pass folder paths as comma-separated string (e.g., ",Projects/parachute")
+/// Empty string "" represents root folder.
+final contextChainProvider =
+    FutureProvider.family<ContextChain, String>((ref, foldersParam) async {
+  final service = ref.watch(chatServiceProvider);
+  try {
+    if (foldersParam.isEmpty) {
+      return const ContextChain(files: [], totalTokens: 0);
+    }
+    // Split comma-separated string back to list
+    final folderPaths = foldersParam.split(',');
+    return await service.getContextChain(folderPaths);
+  } catch (e) {
+    debugPrint('[ChatProviders] Error loading context chain: $e');
+    return const ContextChain(files: [], totalTokens: 0);
+  }
+});
+
+/// Provider for current session's context folders
+///
+/// Fetches the context folders configured for the current session.
+final sessionContextFoldersProvider =
+    FutureProvider.family<List<String>, String>((ref, sessionId) async {
+  final service = ref.watch(chatServiceProvider);
+  return await service.getSessionContextFolders(sessionId);
 });
 
 // ============================================================

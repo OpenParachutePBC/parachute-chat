@@ -6,6 +6,7 @@ import 'session_resume_info.dart';
 enum StreamEventType {
   session,
   promptMetadata, // Prompt composition details for transparency
+  userMessage, // User's message (emitted early so it's visible on rejoin)
   init,
   model, // Model being used (emitted when first assistant message received)
   text,
@@ -53,6 +54,9 @@ class StreamEvent {
           break;
         case 'prompt_metadata':
           type = StreamEventType.promptMetadata;
+          break;
+        case 'user_message':
+          type = StreamEventType.userMessage;
           break;
         case 'init':
           type = StreamEventType.init;
@@ -105,6 +109,9 @@ class StreamEvent {
 
   /// Get text content from text event
   String? get textContent => data['content'] as String?;
+
+  /// Get user message content from user_message event
+  String? get userMessageContent => data['content'] as String?;
 
   /// Get thinking content from thinking event
   String? get thinkingContent => data['content'] as String?;
