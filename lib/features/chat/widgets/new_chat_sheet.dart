@@ -1,26 +1,30 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute_chat/core/theme/design_tokens.dart';
-import '../models/context_file.dart';
-import '../providers/chat_providers.dart';
-import '../screens/context_file_viewer_screen.dart';
+import 'context_folder_picker.dart';
 import 'directory_picker.dart';
 
 /// Result from the new chat sheet
 class NewChatConfig {
-  final List<String> contexts;
+  /// Selected context folder paths (e.g., ["", "Projects/parachute"])
+  final List<String> contextFolders;
+
+  /// Optional working directory for file operations
   final String? workingDirectory;
 
   const NewChatConfig({
-    required this.contexts,
+    required this.contextFolders,
     this.workingDirectory,
   });
+
+  /// Legacy getter for backwards compatibility
+  List<String> get contexts => contextFolders;
 }
 
 /// Bottom sheet for configuring a new chat session
 ///
-/// Shows available context files as selectable chips and
-/// allows selecting a working directory.
+/// Primary flow: Select context folders (AGENTS.md hierarchy)
+/// Secondary: Optionally set a working directory for file operations
 class NewChatSheet extends ConsumerStatefulWidget {
   const NewChatSheet({super.key});
 
@@ -40,14 +44,40 @@ class NewChatSheet extends ConsumerStatefulWidget {
 }
 
 class _NewChatSheetState extends ConsumerState<NewChatSheet> {
+  late List<String> _selectedFolders;
   String? _workingDirectory;
+  bool _showAdvanced = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Default to root context only
+    _selectedFolders = [""];
+  }
+
+  Future<void> _selectContextFolders() async {
+    final selected = await showContextFolderPicker(
+      context,
+      initialSelection: _selectedFolders,
+    );
+
+    if (selected != null && mounted) {
+      setState(() {
+        _selectedFolders = selected;
+      });
+    }
+  }
+
+  String _displayPath(String path) {
+    if (path.isEmpty) return 'Root';
+    // Show just the last folder name for brevity
+    return path.split('/').last;
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final contextsAsync = ref.watch(availableContextsProvider);
-    final selectedContexts = ref.watch(selectedContextsProvider);
 
     return Container(
       constraints: BoxConstraints(
@@ -110,68 +140,28 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
 
           const Divider(height: 1),
 
-          // Scrollable content
+          // Content
           Flexible(
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(Spacing.lg),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Working Directory Section
+                  // Context Folders Section
                   _buildSectionHeader(
                     isDark,
-                    'Working Directory',
-                    'Where the AI agent will operate',
-                  ),
-                  const SizedBox(height: Spacing.sm),
-                  _buildWorkingDirectorySelector(isDark),
-
-                  const SizedBox(height: Spacing.xl),
-
-                  // Context Files Section
-                  _buildSectionHeader(
-                    isDark,
-                    'Context Files',
-                    'Personal context to include in this chat',
+                    'Context',
+                    'Select folders with AGENTS.md to include in this conversation',
                   ),
                   const SizedBox(height: Spacing.sm),
 
-                  // Context chips
-                  contextsAsync.when(
-                    data: (contexts) {
-                      if (contexts.isEmpty) {
-                        return _buildEmptyContexts(isDark);
-                      }
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Wrap(
-                            spacing: Spacing.sm,
-                            runSpacing: Spacing.sm,
-                            children: contexts.map((ctx) {
-                              final isSelected =
-                                  selectedContexts.contains(ctx.path);
-                              return _ContextChip(
-                                contextFile: ctx,
-                                isSelected: isSelected,
-                                onTap: () =>
-                                    _toggleContext(ref, ctx.path, isSelected),
-                                onEdit: () => _editContext(ctx),
-                                isDark: isDark,
-                              );
-                            }).toList(),
-                          ),
-                        ],
-                      );
-                    },
-                    loading: () => const Center(
-                      child: Padding(
-                        padding: EdgeInsets.all(Spacing.md),
-                        child: CircularProgressIndicator(),
-                      ),
-                    ),
-                    error: (e, _) => _buildContextError(isDark),
-                  ),
+                  // Context folder chips with edit button
+                  _buildContextFolderSelector(isDark),
+
+                  const SizedBox(height: Spacing.lg),
+
+                  // Advanced Options (collapsed by default)
+                  _buildAdvancedSection(isDark),
                 ],
               ),
             ),
@@ -190,7 +180,7 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
                   onPressed: () => Navigator.pop(
                     context,
                     NewChatConfig(
-                      contexts: selectedContexts,
+                      contextFolders: _selectedFolders,
                       workingDirectory: _workingDirectory,
                     ),
                   ),
@@ -207,6 +197,137 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildContextFolderSelector(bool isDark) {
+    return InkWell(
+      onTap: _selectContextFolders,
+      borderRadius: BorderRadius.circular(Radii.md),
+      child: Container(
+        padding: const EdgeInsets.all(Spacing.md),
+        decoration: BoxDecoration(
+          color: isDark
+              ? BrandColors.nightSurfaceElevated
+              : BrandColors.stone.withValues(alpha: 0.3),
+          borderRadius: BorderRadius.circular(Radii.md),
+          border: Border.all(
+            color: _selectedFolders.length > 1
+                ? (isDark ? BrandColors.nightForest : BrandColors.forest)
+                : Colors.transparent,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Selected folders as chips
+            Wrap(
+              spacing: Spacing.xs,
+              runSpacing: Spacing.xs,
+              children: [
+                ..._selectedFolders.map((path) {
+                  final isRoot = path.isEmpty;
+                  return Chip(
+                    label: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          isRoot ? Icons.home : Icons.folder,
+                          size: 14,
+                          color:
+                              isDark ? BrandColors.nightText : BrandColors.charcoal,
+                        ),
+                        const SizedBox(width: Spacing.xs),
+                        Text(_displayPath(path)),
+                      ],
+                    ),
+                    backgroundColor: isDark
+                        ? BrandColors.nightForest.withValues(alpha: 0.2)
+                        : BrandColors.forest.withValues(alpha: 0.1),
+                    labelStyle: TextStyle(
+                      color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+                      fontSize: TypographyTokens.bodySmall,
+                    ),
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                  );
+                }),
+                // Add more button
+                ActionChip(
+                  label: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.edit, size: 14),
+                      SizedBox(width: 4),
+                      Text('Edit'),
+                    ],
+                  ),
+                  onPressed: _selectContextFolders,
+                  backgroundColor: Colors.transparent,
+                  side: BorderSide(
+                    color: isDark
+                        ? BrandColors.nightTextSecondary.withValues(alpha: 0.5)
+                        : BrandColors.driftwood.withValues(alpha: 0.5),
+                  ),
+                  labelStyle: TextStyle(
+                    color: isDark
+                        ? BrandColors.nightTextSecondary
+                        : BrandColors.driftwood,
+                    fontSize: TypographyTokens.bodySmall,
+                  ),
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAdvancedSection(bool isDark) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Toggle button
+        InkWell(
+          onTap: () => setState(() => _showAdvanced = !_showAdvanced),
+          borderRadius: BorderRadius.circular(Radii.sm),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: Spacing.xs),
+            child: Row(
+              children: [
+                Icon(
+                  _showAdvanced ? Icons.expand_less : Icons.expand_more,
+                  size: 20,
+                  color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                ),
+                const SizedBox(width: Spacing.xs),
+                Text(
+                  'Advanced Options',
+                  style: TextStyle(
+                    fontSize: TypographyTokens.labelMedium,
+                    color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+
+        // Collapsible content
+        if (_showAdvanced) ...[
+          const SizedBox(height: Spacing.md),
+          _buildSectionHeader(
+            isDark,
+            'Working Directory',
+            'Where the AI can read/write files and run commands',
+          ),
+          const SizedBox(height: Spacing.sm),
+          _buildWorkingDirectorySelector(isDark),
+        ],
+      ],
     );
   }
 
@@ -297,156 +418,5 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
         _workingDirectory = selected.isEmpty ? null : selected;
       });
     }
-  }
-
-  void _toggleContext(WidgetRef ref, String path, bool isCurrentlySelected) {
-    final current = ref.read(selectedContextsProvider);
-    if (isCurrentlySelected) {
-      ref.read(selectedContextsProvider.notifier).state =
-          current.where((p) => p != path).toList();
-    } else {
-      ref.read(selectedContextsProvider.notifier).state = [...current, path];
-    }
-  }
-
-  void _editContext(ContextFile ctx) {
-    // Use the new ContextFileViewerScreen which reads/writes via API
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => ContextFileViewerScreen(contextFile: ctx),
-      ),
-    );
-  }
-
-  Widget _buildEmptyContexts(bool isDark) {
-    return Container(
-      padding: const EdgeInsets.all(Spacing.md),
-      decoration: BoxDecoration(
-        color: isDark
-            ? BrandColors.nightSurfaceElevated
-            : BrandColors.stone.withValues(alpha: 0.3),
-        borderRadius: BorderRadius.circular(Radii.md),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            Icons.info_outline,
-            size: 20,
-            color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-          ),
-          const SizedBox(width: Spacing.sm),
-          Expanded(
-            child: Text(
-              'No context files found. Add .md files to Chat/contexts/ to include personal context.',
-              style: TextStyle(
-                fontSize: TypographyTokens.bodySmall,
-                color: isDark
-                    ? BrandColors.nightTextSecondary
-                    : BrandColors.driftwood,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildContextError(bool isDark) {
-    return Container(
-      padding: const EdgeInsets.all(Spacing.md),
-      decoration: BoxDecoration(
-        color: BrandColors.error.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(Radii.md),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.error_outline, size: 20, color: BrandColors.error),
-          const SizedBox(width: Spacing.sm),
-          Expanded(
-            child: Text(
-              'Could not load context files',
-              style: TextStyle(
-                fontSize: TypographyTokens.bodySmall,
-                color: BrandColors.error,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ContextChip extends StatelessWidget {
-  final ContextFile contextFile;
-  final bool isSelected;
-  final VoidCallback onTap;
-  final VoidCallback? onEdit;
-  final bool isDark;
-
-  const _ContextChip({
-    required this.contextFile,
-    required this.isSelected,
-    required this.onTap,
-    this.onEdit,
-    required this.isDark,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onLongPress: onEdit,
-      child: FilterChip(
-        label: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(contextFile.title),
-            if (contextFile.isDefault) ...[
-              const SizedBox(width: Spacing.xs),
-              Icon(
-                Icons.star,
-                size: 14,
-                color: isSelected ? Colors.white : BrandColors.warning,
-              ),
-            ],
-            // Edit indicator
-            if (onEdit != null) ...[
-              const SizedBox(width: Spacing.xs),
-              Icon(
-                Icons.edit_outlined,
-                size: 12,
-                color: isSelected
-                    ? Colors.white.withValues(alpha: 0.7)
-                    : (isDark
-                        ? BrandColors.nightTextSecondary
-                        : BrandColors.driftwood),
-              ),
-            ],
-          ],
-        ),
-        selected: isSelected,
-        onSelected: (_) => onTap(),
-        selectedColor: isDark ? BrandColors.nightForest : BrandColors.forest,
-        checkmarkColor: Colors.white,
-        labelStyle: TextStyle(
-          color: isSelected
-              ? Colors.white
-              : (isDark ? BrandColors.nightText : BrandColors.charcoal),
-          fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-        ),
-        backgroundColor: isDark
-            ? BrandColors.nightSurfaceElevated
-            : BrandColors.stone.withValues(alpha: 0.5),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(Radii.lg),
-          side: BorderSide(
-            color: isSelected
-                ? (isDark ? BrandColors.nightForest : BrandColors.forest)
-                : Colors.transparent,
-          ),
-        ),
-      ),
-    );
   }
 }

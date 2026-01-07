@@ -20,6 +20,7 @@ class SessionInfoSheet extends ConsumerStatefulWidget {
   final String? model;
   final String? workingDirectory;
   final PromptMetadata? promptMetadata;
+  final List<String> selectedContexts;
 
   const SessionInfoSheet({
     super.key,
@@ -27,6 +28,7 @@ class SessionInfoSheet extends ConsumerStatefulWidget {
     this.model,
     this.workingDirectory,
     this.promptMetadata,
+    this.selectedContexts = const [],
   });
 
   /// Shows the session info sheet
@@ -36,6 +38,7 @@ class SessionInfoSheet extends ConsumerStatefulWidget {
     String? model,
     String? workingDirectory,
     PromptMetadata? promptMetadata,
+    List<String> selectedContexts = const [],
   }) {
     return showModalBottomSheet(
       context: context,
@@ -46,6 +49,7 @@ class SessionInfoSheet extends ConsumerStatefulWidget {
         model: model,
         workingDirectory: workingDirectory,
         promptMetadata: promptMetadata,
+        selectedContexts: selectedContexts,
       ),
     );
   }
@@ -69,6 +73,7 @@ class _SessionInfoSheetState extends ConsumerState<SessionInfoSheet> {
       final chatService = ref.read(chatServiceProvider);
       final result = await chatService.getPromptPreview(
         workingDirectory: widget.workingDirectory,
+        contexts: widget.selectedContexts.isNotEmpty ? widget.selectedContexts : null,
       );
       setState(() {
         _promptText = result.prompt;

@@ -590,8 +590,8 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
   }
 
   Future<void> _startNewChat(BuildContext context) async {
-    // Reset context selection to empty before showing sheet
-    ref.read(selectedContextsProvider.notifier).state = [];
+    // Reset context selection before showing sheet
+    ref.read(selectedContextFoldersProvider.notifier).state = [""];
 
     // Show the new chat sheet
     final config = await NewChatSheet.show(context);
@@ -599,9 +599,12 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
     // If user cancelled, do nothing
     if (config == null) return;
 
-    // Clear session and store selected contexts for first message
+    // Clear session and store configuration
     ref.read(newChatProvider)();
-    ref.read(selectedContextsProvider.notifier).state = config.contexts;
+
+    // Store contexts directly in the chat state so they survive navigation
+    ref.read(chatMessagesProvider.notifier).setSelectedContexts(config.contextFolders);
+    ref.read(selectedContextFoldersProvider.notifier).state = config.contextFolders;
 
     // Set working directory if specified
     if (config.workingDirectory != null) {
@@ -620,8 +623,8 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
   }
 
   Future<void> _startNewChatWithPrompt(BuildContext context, String prompt) async {
-    // Reset context selection to empty
-    ref.read(selectedContextsProvider.notifier).state = [];
+    // Reset context selection before showing sheet
+    ref.read(selectedContextFoldersProvider.notifier).state = [""];
 
     // Show the new chat sheet
     final config = await NewChatSheet.show(context);
@@ -630,7 +633,10 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
     if (config == null) return;
 
     ref.read(newChatProvider)();
-    ref.read(selectedContextsProvider.notifier).state = config.contexts;
+
+    // Store contexts directly in the chat state so they survive navigation
+    ref.read(chatMessagesProvider.notifier).setSelectedContexts(config.contextFolders);
+    ref.read(selectedContextFoldersProvider.notifier).state = config.contextFolders;
 
     // Set working directory if specified
     if (config.workingDirectory != null) {

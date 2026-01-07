@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import '../models/chat_session.dart';
 import '../models/chat_message.dart';
 import '../models/context_file.dart';
+import '../models/context_folder.dart';
 import '../models/prompt_metadata.dart';
 import '../models/stream_event.dart';
 import '../models/system_prompt_info.dart';
@@ -707,6 +708,101 @@ class ChatService {
       return contextFiles;
     } catch (e) {
       debugPrint('[ChatService] Error getting contexts: $e');
+      rethrow;
+    }
+  }
+
+  // ============================================================
+  // Context Folders (AGENTS.md hierarchy)
+  // ============================================================
+
+  /// Get available context folders (folders with AGENTS.md or CLAUDE.md)
+  ///
+  /// Returns folders that can be selected as context for a session.
+  Future<List<ContextFolder>> getContextFolders() async {
+    try {
+      final response = await _client.get(
+        Uri.parse('$baseUrl/api/contexts/folders'),
+        headers: _defaultHeaders,
+      ).timeout(requestTimeout);
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to get context folders: ${response.statusCode}');
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final folders = data['folders'] as List<dynamic>? ?? [];
+
+      return folders
+          .map((f) => ContextFolder.fromJson(f as Map<String, dynamic>))
+          .toList();
+    } catch (e) {
+      debugPrint('[ChatService] Error getting context folders: $e');
+      rethrow;
+    }
+  }
+
+  /// Get the context chain for selected folders
+  ///
+  /// Returns the full parent chain of AGENTS.md files.
+  Future<ContextChain> getContextChain(List<String> folderPaths) async {
+    try {
+      final foldersParam = folderPaths.join(',');
+      final response = await _client.get(
+        Uri.parse('$baseUrl/api/contexts/chain?folders=$foldersParam'),
+        headers: _defaultHeaders,
+      ).timeout(requestTimeout);
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to get context chain: ${response.statusCode}');
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return ContextChain.fromJson(data);
+    } catch (e) {
+      debugPrint('[ChatService] Error getting context chain: $e');
+      rethrow;
+    }
+  }
+
+  /// Get context folders for a session
+  Future<List<String>> getSessionContextFolders(String sessionId) async {
+    try {
+      final response = await _client.get(
+        Uri.parse('$baseUrl/api/contexts/session/$sessionId'),
+        headers: _defaultHeaders,
+      ).timeout(requestTimeout);
+
+      if (response.statusCode != 200) {
+        return []; // Session may not have contexts set
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final paths = data['folder_paths'] as List<dynamic>? ?? [];
+      return paths.cast<String>();
+    } catch (e) {
+      debugPrint('[ChatService] Error getting session context folders: $e');
+      return [];
+    }
+  }
+
+  /// Set context folders for a session
+  Future<void> setSessionContextFolders(
+    String sessionId,
+    List<String> folderPaths,
+  ) async {
+    try {
+      final response = await _client.put(
+        Uri.parse('$baseUrl/api/contexts/session/$sessionId'),
+        headers: _defaultHeaders,
+        body: jsonEncode({'folder_paths': folderPaths}),
+      ).timeout(requestTimeout);
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to set session contexts: ${response.statusCode}');
+      }
+    } catch (e) {
+      debugPrint('[ChatService] Error setting session context folders: $e');
       rethrow;
     }
   }

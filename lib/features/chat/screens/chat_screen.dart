@@ -161,21 +161,22 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   void _handleSend(String message, [List<ChatAttachment>? attachments]) {
-    // Get selected contexts for first message only
     final chatState = ref.read(chatMessagesProvider);
-    List<String>? contexts;
 
-    // Only include contexts on the first message of a new chat
-    if (chatState.messages.isEmpty && chatState.sessionId == null) {
-      contexts = ref.read(selectedContextsProvider);
-      // Reset contexts after using them
-      ref.read(selectedContextsProvider.notifier).state = [];
-    }
+    // Debug: trace context selection
+    debugPrint('[ChatScreen] _handleSend - messages.isEmpty: ${chatState.messages.isEmpty}');
+    debugPrint('[ChatScreen] _handleSend - sessionId: ${chatState.sessionId}');
+    debugPrint('[ChatScreen] _handleSend - selectedContexts: ${chatState.selectedContexts}');
+    debugPrint('[ChatScreen] _handleSend - contextsExplicitlySet: ${chatState.contextsExplicitlySet}');
+
+    // Contexts are handled by ChatMessagesNotifier.sendMessage() based on:
+    // - contexts param (if passed)
+    // - chatState.selectedContexts (if contextsExplicitlySet is true)
+    // - server defaults (otherwise)
 
     ref.read(chatMessagesProvider.notifier).sendMessage(
           message: message,
           initialContext: _pendingInitialContext,
-          contexts: contexts,
           attachments: attachments,
         );
 
@@ -983,6 +984,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       model: chatState.model,
       workingDirectory: chatState.workingDirectory,
       promptMetadata: chatState.promptMetadata,
+      selectedContexts: chatState.selectedContexts,
     );
   }
 

@@ -136,20 +136,31 @@ class _DirectoryTile extends StatelessWidget {
     required this.onSelect,
   });
 
+  String? get _contextFileLabel {
+    if (entry.hasAgentsMd && entry.hasClaudeMd) {
+      return 'Has AGENTS.md & CLAUDE.md';
+    } else if (entry.hasAgentsMd) {
+      return 'Has AGENTS.md';
+    } else if (entry.hasClaudeMd) {
+      return 'Has CLAUDE.md';
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListTile(
       leading: Icon(
-        entry.hasClaudeMd
+        entry.hasContextFile
             ? Icons.folder_special
             : entry.isGitRepo
                 ? Icons.source
                 : Icons.folder,
-        color: entry.hasClaudeMd ? Colors.amber : null,
+        color: entry.hasContextFile ? Colors.amber : null,
       ),
       title: Text(entry.name),
-      subtitle: entry.hasClaudeMd
-          ? const Text('Has CLAUDE.md', style: TextStyle(fontSize: 12))
+      subtitle: _contextFileLabel != null
+          ? Text(_contextFileLabel!, style: const TextStyle(fontSize: 12))
           : entry.isGitRepo
               ? const Text('Git repository', style: TextStyle(fontSize: 12))
               : null,

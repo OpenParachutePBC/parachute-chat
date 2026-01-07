@@ -6,6 +6,7 @@ class VaultEntry {
   final String relativePath;
   final bool isSymlink;
   final String? symlinkTarget;
+  final bool hasAgentsMd;
   final bool hasClaudeMd;
   final bool isGitRepo;
   final DateTime? lastModified;
@@ -18,6 +19,7 @@ class VaultEntry {
     required this.relativePath,
     this.isSymlink = false,
     this.symlinkTarget,
+    this.hasAgentsMd = false,
     this.hasClaudeMd = false,
     this.isGitRepo = false,
     this.lastModified,
@@ -27,6 +29,9 @@ class VaultEntry {
   bool get isDirectory => type == 'directory';
   bool get isFile => type == 'file';
 
+  /// Whether this folder has context files (AGENTS.md or CLAUDE.md)
+  bool get hasContextFile => hasAgentsMd || hasClaudeMd;
+
   factory VaultEntry.fromJson(Map<String, dynamic> json) {
     return VaultEntry(
       name: json['name'] as String,
@@ -35,6 +40,7 @@ class VaultEntry {
       relativePath: json['relativePath'] as String? ?? json['path'] as String,
       isSymlink: json['isSymlink'] as bool? ?? false,
       symlinkTarget: json['symlinkTarget'] as String?,
+      hasAgentsMd: json['hasAgentsMd'] as bool? ?? false,
       hasClaudeMd: json['hasClaudeMd'] as bool? ?? false,
       isGitRepo: json['isGitRepo'] as bool? ?? false,
       lastModified: json['lastModified'] != null
@@ -52,6 +58,7 @@ class VaultEntry {
       'relativePath': relativePath,
       'isSymlink': isSymlink,
       if (symlinkTarget != null) 'symlinkTarget': symlinkTarget,
+      'hasAgentsMd': hasAgentsMd,
       'hasClaudeMd': hasClaudeMd,
       'isGitRepo': isGitRepo,
       if (lastModified != null) 'lastModified': lastModified!.toIso8601String(),

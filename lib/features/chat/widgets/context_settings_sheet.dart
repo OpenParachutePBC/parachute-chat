@@ -1,17 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute_chat/core/theme/design_tokens.dart';
-import '../models/context_file.dart';
 import '../models/prompt_metadata.dart';
-import '../providers/chat_providers.dart';
+import 'context_folder_picker.dart';
 
 /// Bottom sheet for managing context settings mid-session
 ///
-/// Allows users to:
-/// - Toggle context files on/off
-/// - See current project context (CLAUDE.md) and reload it
-/// - Preview token counts
-/// - Changes take effect on the next message
+/// Shows folder-based context selection with AGENTS.md hierarchy.
+/// Users can select folders and the parent chain is automatically included.
 class ContextSettingsSheet extends ConsumerStatefulWidget {
   final String? workingDirectory;
   final PromptMetadata? promptMetadata;
@@ -56,41 +52,77 @@ class ContextSettingsSheet extends ConsumerStatefulWidget {
 }
 
 class _ContextSettingsSheetState extends ConsumerState<ContextSettingsSheet> {
-  late List<String> _selectedContexts;
+  late List<String> _selectedFolders;
   bool _hasChanges = false;
 
   @override
   void initState() {
     super.initState();
-    _selectedContexts = List.from(widget.selectedContexts);
+    // Convert legacy context paths to folder paths if needed
+    _selectedFolders = _extractFolderPaths(widget.selectedContexts);
+    // If empty, default to root
+    if (_selectedFolders.isEmpty) {
+      _selectedFolders = [""];
+    }
   }
 
-  void _toggleContext(String contextPath) {
-    setState(() {
-      if (_selectedContexts.contains(contextPath)) {
-        _selectedContexts.remove(contextPath);
+  /// Extract folder paths from mixed context paths
+  List<String> _extractFolderPaths(List<String> contexts) {
+    final folders = <String>[];
+    for (final ctx in contexts) {
+      if (ctx.endsWith('.md')) {
+        // Legacy: "Chat/contexts/file.md" -> skip (legacy file)
+        // Or: "Projects/parachute/AGENTS.md" -> extract folder
+        if (ctx.contains('AGENTS.md') || ctx.contains('CLAUDE.md')) {
+          final folder = ctx
+              .replaceAll('/AGENTS.md', '')
+              .replaceAll('/CLAUDE.md', '')
+              .replaceAll('AGENTS.md', '')
+              .replaceAll('CLAUDE.md', '');
+          folders.add(folder);
+        }
       } else {
-        _selectedContexts.add(contextPath);
+        // Already a folder path
+        folders.add(ctx);
       }
-      _hasChanges = true;
-    });
+    }
+    return folders;
+  }
+
+  Future<void> _selectFolders() async {
+    final selected = await showContextFolderPicker(
+      context,
+      initialSelection: _selectedFolders,
+    );
+
+    if (selected != null && mounted) {
+      setState(() {
+        _selectedFolders = selected;
+        _hasChanges = true;
+      });
+    }
   }
 
   void _applyChanges() {
-    widget.onContextsChanged(_selectedContexts);
+    // Return folder paths directly (orchestrator now handles folders)
+    widget.onContextsChanged(_selectedFolders);
     Navigator.of(context).pop();
+  }
+
+  String _displayPath(String path) {
+    if (path.isEmpty) return 'Root';
+    return path.split('/').last;
   }
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final availableContextsAsync = ref.watch(availableContextsProvider);
     final metadata = widget.promptMetadata;
 
     return DraggableScrollableSheet(
       initialChildSize: 0.6,
       minChildSize: 0.3,
-      maxChildSize: 0.85,
+      maxChildSize: 0.9,
       builder: (context, scrollController) => Container(
         decoration: BoxDecoration(
           color: colorScheme.surface,
@@ -117,7 +149,7 @@ class _ContextSettingsSheetState extends ConsumerState<ContextSettingsSheet> {
               child: Row(
                 children: [
                   Icon(
-                    Icons.tune,
+                    Icons.folder_special,
                     color: colorScheme.primary,
                   ),
                   const SizedBox(width: Spacing.sm),
@@ -143,21 +175,41 @@ class _ContextSettingsSheetState extends ConsumerState<ContextSettingsSheet> {
                 controller: scrollController,
                 padding: const EdgeInsets.all(Spacing.md),
                 children: [
-                  // Current prompt metadata summary
-                  if (metadata != null) ...[
-                    _buildMetadataSummary(metadata, colorScheme),
-                    const SizedBox(height: Spacing.md),
-                  ],
+                  // Selected folders section
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.folder_open,
+                        size: 18,
+                        color: colorScheme.secondary,
+                      ),
+                      const SizedBox(width: Spacing.sm),
+                      Text(
+                        'Context Folders',
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: Spacing.xs),
+                  Text(
+                    'Folders with AGENTS.md that provide context',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: Spacing.md),
+
+                  // Folder selection UI
+                  _buildFolderSelector(colorScheme),
 
                   // Project Context (CLAUDE.md) section
                   if (metadata?.workingDirectoryClaudeMd != null ||
                       widget.workingDirectory != null) ...[
+                    const SizedBox(height: Spacing.lg),
                     _buildProjectContextSection(colorScheme),
-                    const SizedBox(height: Spacing.md),
                   ],
-
-                  // Context files section
-                  _buildContextFilesSection(availableContextsAsync, colorScheme),
 
                   const SizedBox(height: Spacing.lg),
 
@@ -178,7 +230,7 @@ class _ContextSettingsSheetState extends ConsumerState<ContextSettingsSheet> {
                         const SizedBox(width: Spacing.sm),
                         Expanded(
                           child: Text(
-                            'Changes take effect on your next message',
+                            'Parent folders are automatically included. Changes take effect on your next message.',
                             style: Theme.of(context).textTheme.bodySmall?.copyWith(
                               color: colorScheme.onSurfaceVariant,
                             ),
@@ -196,76 +248,79 @@ class _ContextSettingsSheetState extends ConsumerState<ContextSettingsSheet> {
     );
   }
 
-  Widget _buildMetadataSummary(PromptMetadata metadata, ColorScheme colorScheme) {
-    return Container(
-      padding: const EdgeInsets.all(Spacing.sm),
-      decoration: BoxDecoration(
-        color: colorScheme.primaryContainer.withValues(alpha: 0.3),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: colorScheme.primary.withValues(alpha: 0.2),
+  Widget _buildFolderSelector(ColorScheme colorScheme) {
+    return InkWell(
+      onTap: _selectFolders,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.all(Spacing.md),
+        decoration: BoxDecoration(
+          color: colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: _selectedFolders.length > 1
+                ? colorScheme.primary.withValues(alpha: 0.5)
+                : Colors.transparent,
+          ),
         ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Current Prompt',
-            style: Theme.of(context).textTheme.titleSmall?.copyWith(
-              color: colorScheme.primary,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: Spacing.xs),
-          Row(
-            children: [
-              Icon(
-                Icons.analytics_outlined,
-                size: 14,
-                color: colorScheme.onSurfaceVariant,
-              ),
-              const SizedBox(width: 4),
-              Text(
-                '~${_formatTokens(metadata.totalPromptTokens)} tokens',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(width: Spacing.md),
-              Icon(
-                Icons.description_outlined,
-                size: 14,
-                color: colorScheme.onSurfaceVariant,
-              ),
-              const SizedBox(width: 4),
-              Text(
-                '${metadata.contextFiles.length} context file${metadata.contextFiles.length == 1 ? '' : 's'}',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ),
-          if (metadata.contextTruncated) ...[
-            const SizedBox(height: Spacing.xs),
-            Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Selected folders as chips
+            Wrap(
+              spacing: Spacing.xs,
+              runSpacing: Spacing.xs,
               children: [
-                Icon(
-                  Icons.warning_amber,
-                  size: 14,
-                  color: colorScheme.error,
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  'Context was truncated due to token limit',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: colorScheme.error,
+                ..._selectedFolders.map((path) {
+                  final isRoot = path.isEmpty;
+                  return Chip(
+                    label: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          isRoot ? Icons.home : Icons.folder,
+                          size: 14,
+                          color: colorScheme.onSurface,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(_displayPath(path)),
+                      ],
+                    ),
+                    backgroundColor: colorScheme.primaryContainer.withValues(alpha: 0.5),
+                    labelStyle: TextStyle(
+                      color: colorScheme.onSurface,
+                      fontSize: 12,
+                    ),
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                  );
+                }),
+                // Edit button
+                ActionChip(
+                  label: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.edit, size: 14),
+                      SizedBox(width: 4),
+                      Text('Edit'),
+                    ],
                   ),
+                  onPressed: _selectFolders,
+                  backgroundColor: Colors.transparent,
+                  side: BorderSide(
+                    color: colorScheme.outline.withValues(alpha: 0.5),
+                  ),
+                  labelStyle: TextStyle(
+                    color: colorScheme.onSurfaceVariant,
+                    fontSize: 12,
+                  ),
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
                 ),
               ],
             ),
           ],
-        ],
+        ),
       ),
     );
   }
@@ -280,13 +335,13 @@ class _ContextSettingsSheetState extends ConsumerState<ContextSettingsSheet> {
         Row(
           children: [
             Icon(
-              Icons.folder_special,
+              Icons.code,
               size: 18,
               color: colorScheme.secondary,
             ),
             const SizedBox(width: Spacing.sm),
             Text(
-              'Project Context',
+              'Working Directory Context',
               style: Theme.of(context).textTheme.titleSmall?.copyWith(
                 fontWeight: FontWeight.w600,
               ),
@@ -323,7 +378,7 @@ class _ContextSettingsSheetState extends ConsumerState<ContextSettingsSheet> {
                       )
                     else
                       Text(
-                        'No project context',
+                        'No working directory context',
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           color: colorScheme.onSurfaceVariant,
                           fontStyle: FontStyle.italic,
@@ -361,189 +416,5 @@ class _ContextSettingsSheetState extends ConsumerState<ContextSettingsSheet> {
         ),
       ],
     );
-  }
-
-  Widget _buildContextFilesSection(
-    AsyncValue<List<ContextFile>> availableContextsAsync,
-    ColorScheme colorScheme,
-  ) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(
-              Icons.library_books,
-              size: 18,
-              color: colorScheme.secondary,
-            ),
-            const SizedBox(width: Spacing.sm),
-            Text(
-              'Context Files',
-              style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: Spacing.sm),
-        availableContextsAsync.when(
-          data: (contexts) {
-            if (contexts.isEmpty) {
-              return Container(
-                padding: const EdgeInsets.all(Spacing.md),
-                decoration: BoxDecoration(
-                  color: colorScheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.info_outline,
-                      size: 16,
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                    const SizedBox(width: Spacing.sm),
-                    Expanded(
-                      child: Text(
-                        'No context files found. Create markdown files in Chat/contexts/ to add personal context.',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            }
-
-            return Column(
-              children: contexts.map((ctx) {
-                final isSelected = _selectedContexts.contains(ctx.path);
-                return _ContextFileTile(
-                  contextFile: ctx,
-                  isSelected: isSelected,
-                  onToggle: () => _toggleContext(ctx.path),
-                );
-              }).toList(),
-            );
-          },
-          loading: () => const Center(
-            child: Padding(
-              padding: EdgeInsets.all(Spacing.md),
-              child: CircularProgressIndicator(),
-            ),
-          ),
-          error: (err, _) => Container(
-            padding: const EdgeInsets.all(Spacing.md),
-            decoration: BoxDecoration(
-              color: colorScheme.errorContainer,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.error_outline, color: colorScheme.error),
-                const SizedBox(width: Spacing.sm),
-                Expanded(
-                  child: Text(
-                    'Failed to load contexts: $err',
-                    style: TextStyle(color: colorScheme.onErrorContainer),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  String _formatTokens(int tokens) {
-    if (tokens >= 1000) {
-      return '${(tokens / 1000).toStringAsFixed(1)}k';
-    }
-    return tokens.toString();
-  }
-}
-
-/// Individual context file tile with toggle
-class _ContextFileTile extends StatelessWidget {
-  final ContextFile contextFile;
-  final bool isSelected;
-  final VoidCallback onToggle;
-
-  const _ContextFileTile({
-    required this.contextFile,
-    required this.isSelected,
-    required this.onToggle,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    // Estimate tokens from file size (roughly 4 chars per token)
-    final estimatedTokens = contextFile.size ~/ 4;
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: Spacing.xs),
-      child: Material(
-        color: isSelected
-            ? colorScheme.primaryContainer.withValues(alpha: 0.4)
-            : colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(8),
-        child: InkWell(
-          onTap: onToggle,
-          borderRadius: BorderRadius.circular(8),
-          child: Padding(
-            padding: const EdgeInsets.all(Spacing.sm),
-            child: Row(
-              children: [
-                Checkbox(
-                  value: isSelected,
-                  onChanged: (_) => onToggle(),
-                  visualDensity: VisualDensity.compact,
-                ),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        contextFile.title.isNotEmpty ? contextFile.title : contextFile.filename,
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                        ),
-                      ),
-                      if (contextFile.description.isNotEmpty)
-                        Text(
-                          contextFile.description,
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: colorScheme.onSurfaceVariant,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                    ],
-                  ),
-                ),
-                Text(
-                  '~${_formatTokens(estimatedTokens)}',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
-                    fontFamily: 'monospace',
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  String _formatTokens(int tokens) {
-    if (tokens >= 1000) {
-      return '${(tokens / 1000).toStringAsFixed(1)}k';
-    }
-    return tokens.toString();
   }
 }
