@@ -370,7 +370,7 @@ class _ContextSettingsSheetState extends ConsumerState<ContextSettingsSheet> {
                       )
                     else if (widget.workingDirectory != null)
                       Text(
-                        '${widget.workingDirectory}/CLAUDE.md',
+                        '${widget.workingDirectory}/(AGENTS.md or CLAUDE.md)',
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           fontFamily: 'monospace',
                           color: colorScheme.onSurfaceVariant,
@@ -408,7 +408,7 @@ class _ContextSettingsSheetState extends ConsumerState<ContextSettingsSheet> {
                     );
                   },
                   icon: const Icon(Icons.refresh),
-                  tooltip: 'Reload CLAUDE.md',
+                  tooltip: 'Reload working directory context',
                   iconSize: 20,
                 ),
             ],

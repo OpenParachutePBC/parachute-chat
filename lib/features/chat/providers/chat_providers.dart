@@ -475,8 +475,26 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
 
       // Preserve state that should persist across session reloads
       final currentModel = state.model;
-      final currentContexts = state.selectedContexts;
-      final contextsExplicit = state.contextsExplicitlySet;
+
+      // Load persisted contexts from database
+      // This ensures contexts survive app restarts and session switches
+      List<String> effectiveContexts = state.selectedContexts;
+      bool effectiveContextsExplicit = state.contextsExplicitlySet;
+
+      try {
+        final persistedContexts = await _service.getSessionContextFolders(sessionId);
+        if (persistedContexts.isNotEmpty) {
+          effectiveContexts = persistedContexts;
+          effectiveContextsExplicit = true;
+          debugPrint('[ChatMessagesNotifier] Loaded persisted contexts from database: $persistedContexts');
+        } else if (!effectiveContextsExplicit) {
+          // No persisted contexts and no local explicit choice - use defaults
+          debugPrint('[ChatMessagesNotifier] No persisted contexts, using defaults');
+        }
+      } catch (e) {
+        debugPrint('[ChatMessagesNotifier] Failed to load persisted contexts: $e');
+        // Fall back to current state contexts
+      }
 
       state = ChatMessagesState(
         messages: loadedMessages,
@@ -491,8 +509,8 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         model: currentModel, // Preserve model from streaming
         transcriptSegments: segmentMetadata,
         transcriptSegmentCount: segmentCount,
-        selectedContexts: currentContexts, // Preserve user-selected context
-        contextsExplicitlySet: contextsExplicit, // Preserve explicit context flag
+        selectedContexts: effectiveContexts, // Use persisted or current contexts
+        contextsExplicitlySet: effectiveContextsExplicit, // Mark explicit if loaded from DB
       );
 
       // If there's an active background stream, reattach to receive updates
@@ -969,11 +987,15 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
   /// Changes take effect on the next message sent.
   /// [contexts] are paths relative to vault (e.g., "Chat/contexts/work-context.md")
   /// This also marks contexts as explicitly set, so even an empty list means "load nothing".
+  /// Also persists the selection to the database for the current session.
   void setSelectedContexts(List<String> contexts) {
     state = state.copyWith(
       selectedContexts: contexts,
       contextsExplicitlySet: true,
     );
+
+    // Persist to database if we have a session
+    _persistContextsToDatabase(contexts);
   }
 
   /// Toggle a specific context file on or off
@@ -988,6 +1010,26 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
       selectedContexts: current,
       contextsExplicitlySet: true,
     );
+
+    // Persist to database if we have a session
+    _persistContextsToDatabase(current);
+  }
+
+  /// Persist context selection to database for the current session
+  Future<void> _persistContextsToDatabase(List<String> contexts) async {
+    final sessionId = state.sessionId;
+    if (sessionId == null || sessionId == 'pending') {
+      debugPrint('[ChatMessagesNotifier] No session ID yet, contexts will be persisted after first message');
+      return;
+    }
+
+    try {
+      await _service.setSessionContextFolders(sessionId, contexts);
+      debugPrint('[ChatMessagesNotifier] Persisted contexts to database: $contexts');
+    } catch (e) {
+      debugPrint('[ChatMessagesNotifier] Failed to persist contexts: $e');
+      // Don't rethrow - local state is still updated, persistence is best-effort
+    }
   }
 
   /// Mark that CLAUDE.md should be reloaded on the next message
@@ -1376,6 +1418,12 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
                 _ref.read(currentSessionIdProvider.notifier).state = doneSessionId;
                 // ALSO update state.sessionId so future sendMessage calls use the correct ID
                 state = state.copyWith(sessionId: doneSessionId);
+
+                // Persist any explicitly set contexts now that we have a real session ID
+                // This handles the case where user set contexts before the first message
+                if (state.contextsExplicitlySet) {
+                  _persistContextsToDatabase(state.selectedContexts);
+                }
               } else if (!isValidSessionId) {
                 debugPrint('[ChatMessagesNotifier] WARNING: Done event has invalid session ID: $doneSessionId - keeping current: ${state.sessionId}');
               }
