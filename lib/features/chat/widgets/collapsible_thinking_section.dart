@@ -425,17 +425,36 @@ class _CollapsibleThinkingSectionState extends State<CollapsibleThinkingSection>
         } else {
           displayValue = value;
         }
-      } else if (value is Map || value is List) {
+        buffer.writeln('${entry.key}: $displayValue');
+      } else if (value is List) {
+        // Format lists nicely (especially for TodoWrite)
+        buffer.writeln('${entry.key}:');
+        for (var i = 0; i < value.length && i < 10; i++) {
+          final item = value[i];
+          if (item is Map) {
+            // Format todo items nicely
+            final status = item['status'] ?? '';
+            final content = item['content'] ?? item.toString();
+            final icon = status == 'completed' ? '✓' : status == 'in_progress' ? '→' : '○';
+            buffer.writeln('  $icon $content');
+          } else {
+            buffer.writeln('  • $item');
+          }
+        }
+        if (value.length > 10) {
+          buffer.writeln('  ... and ${value.length - 10} more');
+        }
+      } else if (value is Map) {
         // Format JSON-like structures
         displayValue = value.toString();
         if (displayValue.length > 200) {
           displayValue = '${displayValue.substring(0, 197)}...';
         }
+        buffer.writeln('${entry.key}: $displayValue');
       } else {
         displayValue = value.toString();
+        buffer.writeln('${entry.key}: $displayValue');
       }
-
-      buffer.writeln('${entry.key}: $displayValue');
     }
     return buffer.toString().trimRight();
   }
@@ -450,16 +469,19 @@ class _CollapsibleThinkingSectionState extends State<CollapsibleThinkingSection>
 
   IconData _getToolIcon(String toolName) {
     final name = toolName.toLowerCase();
+    if (name == 'skill') return Icons.auto_awesome;
+    if (name == 'todowrite') return Icons.checklist;
+    if (name == 'task') return Icons.account_tree;
     if (name.contains('read')) return Icons.description_outlined;
     if (name.contains('bash')) return Icons.terminal;
     if (name.contains('glob') || name.contains('grep')) return Icons.search;
     if (name.contains('write') || name.contains('edit')) return Icons.edit_outlined;
-    if (name.contains('task')) return Icons.task_alt;
     if (name.contains('search')) return Icons.search;
     if (name.contains('image') || name.contains('generate')) return Icons.image_outlined;
     if (name.contains('browser') || name.contains('navigate')) return Icons.public;
     if (name.contains('click')) return Icons.mouse;
     if (name.contains('snapshot')) return Icons.camera_alt_outlined;
+    if (name.contains('glif')) return Icons.brush;
     return Icons.build_outlined;
   }
 }
