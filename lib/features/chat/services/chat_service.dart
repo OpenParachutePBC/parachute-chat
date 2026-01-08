@@ -286,6 +286,48 @@ class ChatService {
     }
   }
 
+  /// Submit answers to a user question (AskUserQuestion tool)
+  ///
+  /// When Claude asks the user a question via the AskUserQuestion tool,
+  /// the client receives a user_question event with a requestId. This
+  /// method submits the user's answers back to continue the conversation.
+  ///
+  /// [sessionId] - The session ID
+  /// [requestId] - The request ID from the user_question event
+  /// [answers] - Map of question text to selected answer(s)
+  ///
+  /// Returns true if answers were submitted successfully.
+  Future<bool> answerQuestion({
+    required String sessionId,
+    required String requestId,
+    required Map<String, dynamic> answers,
+  }) async {
+    try {
+      debugPrint('[ChatService] Answering question $requestId for session $sessionId');
+      final response = await _client.post(
+        Uri.parse('$baseUrl/api/chat/${Uri.encodeComponent(sessionId)}/answer'),
+        headers: _defaultHeaders,
+        body: jsonEncode({
+          'request_id': requestId,
+          'answers': answers,
+        }),
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        debugPrint('[ChatService] Answer submitted successfully');
+        return true;
+      } else if (response.statusCode == 404) {
+        debugPrint('[ChatService] No pending question found: ${response.body}');
+        return false;
+      } else {
+        throw Exception('Failed to submit answer: ${response.statusCode}');
+      }
+    } catch (e) {
+      debugPrint('[ChatService] Error submitting answer: $e');
+      return false;
+    }
+  }
+
   /// Abort an active streaming session
   /// Returns true if abort was successful, false if no active stream found
   Future<bool> abortStream(String sessionId) async {

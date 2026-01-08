@@ -16,6 +16,7 @@ import '../widgets/directory_picker.dart';
 import '../widgets/session_info_sheet.dart';
 import '../widgets/context_settings_sheet.dart';
 import '../widgets/curator_session_viewer_sheet.dart';
+import '../widgets/user_question_card.dart';
 import '../../settings/screens/settings_screen.dart';
 
 /// Main chat screen for AI conversations
@@ -489,6 +490,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           // Resume button for archived sessions
           if (chatState.isViewingArchived)
             _buildContinueButton(context, isDark, chatState),
+
+          // User question card (when Claude is asking via AskUserQuestion)
+          if (chatState.pendingUserQuestion != null)
+            _buildUserQuestionCard(chatState.pendingUserQuestion!),
 
           // Input field - disabled when viewing archived sessions (use Resume button)
           ChatInput(
@@ -1011,6 +1016,31 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     if (chatState.sessionId != null) {
       CuratorSessionViewerSheet.show(context, chatState.sessionId!);
     }
+  }
+
+  /// Build the user question card when Claude asks a question
+  Widget _buildUserQuestionCard(Map<String, dynamic> questionData) {
+    final requestId = questionData['requestId'] as String? ?? '';
+    final sessionId = questionData['sessionId'] as String? ?? '';
+    final questionsJson = questionData['questions'] as List<dynamic>? ?? [];
+
+    // Parse the questions
+    final questions = questionsJson
+        .map((q) => UserQuestion.fromJson(q as Map<String, dynamic>))
+        .toList();
+
+    if (questions.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return UserQuestionCard(
+      requestId: requestId,
+      sessionId: sessionId,
+      questions: questions,
+      onAnswer: (answers) async {
+        return await ref.read(chatMessagesProvider.notifier).answerQuestion(answers);
+      },
+    );
   }
 
   /// Resume an archived session - unarchive and enable input

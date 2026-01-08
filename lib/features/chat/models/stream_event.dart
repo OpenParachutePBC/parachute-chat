@@ -13,6 +13,7 @@ enum StreamEventType {
   thinking,
   toolUse,
   toolResult,
+  userQuestion, // Claude is asking user a question (AskUserQuestion tool)
   sessionUnavailable, // SDK session couldn't be resumed
   aborted, // Stream was stopped by user
   done,
@@ -75,6 +76,9 @@ class StreamEvent {
           break;
         case 'tool_result':
           type = StreamEventType.toolResult;
+          break;
+        case 'user_question':
+          type = StreamEventType.userQuestion;
           break;
         case 'session_unavailable':
           type = StreamEventType.sessionUnavailable;
@@ -200,4 +204,16 @@ class StreamEvent {
 
   /// Whether trust mode is enabled for this session
   bool get trustMode => data['trustMode'] as bool? ?? true;
+
+  // User question event accessors
+
+  /// Get request ID for answering user questions
+  String? get questionRequestId => data['requestId'] as String?;
+
+  /// Get questions list from user_question event
+  List<Map<String, dynamic>> get questions {
+    final qs = data['questions'] as List<dynamic>?;
+    if (qs == null) return [];
+    return qs.cast<Map<String, dynamic>>();
+  }
 }

@@ -202,6 +202,11 @@ class ChatMessagesState {
   /// Set to true when user wants to refresh project context
   final bool reloadClaudeMd;
 
+  /// Pending user question from AskUserQuestion tool
+  /// When set, UI should display a question card for user to answer
+  /// Map contains: requestId, sessionId, questions
+  final Map<String, dynamic>? pendingUserQuestion;
+
   const ChatMessagesState({
     this.messages = const [],
     this.isStreaming = false,
@@ -222,6 +227,7 @@ class ChatMessagesState {
     this.selectedContexts = const [],
     this.contextsExplicitlySet = false,
     this.reloadClaudeMd = false,
+    this.pendingUserQuestion,
   });
 
   /// Whether this session is continuing from another
@@ -256,9 +262,11 @@ class ChatMessagesState {
     List<String>? selectedContexts,
     bool? contextsExplicitlySet,
     bool? reloadClaudeMd,
+    Map<String, dynamic>? pendingUserQuestion,
     bool clearSessionUnavailable = false,
     bool clearWorkingDirectory = false,
     bool clearViewingSession = false,
+    bool clearPendingUserQuestion = false,
   }) {
     return ChatMessagesState(
       messages: messages ?? this.messages,
@@ -280,6 +288,7 @@ class ChatMessagesState {
       selectedContexts: selectedContexts ?? this.selectedContexts,
       contextsExplicitlySet: contextsExplicitlySet ?? this.contextsExplicitlySet,
       reloadClaudeMd: reloadClaudeMd ?? this.reloadClaudeMd,
+      pendingUserQuestion: clearPendingUserQuestion ? null : (pendingUserQuestion ?? this.pendingUserQuestion),
     );
   }
 }
@@ -881,6 +890,9 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
 
       case StreamEventType.init:
       case StreamEventType.sessionUnavailable:
+      case StreamEventType.userQuestion:
+        // userQuestion events are handled separately via pendingUserQuestion state
+        // The UI should listen for these and display the UserQuestionCard
       case StreamEventType.unknown:
         // Ignore these events in join stream
         break;
@@ -1516,6 +1528,19 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
             debugPrint('[ChatMessagesNotifier] Received user_message event (already displayed locally)');
             break;
 
+          case StreamEventType.userQuestion:
+            // User question event - Claude is asking the user something
+            // Update state so UI can display the question card
+            debugPrint('[ChatMessagesNotifier] Received user_question event: ${event.questionRequestId}');
+            state = state.copyWith(
+              pendingUserQuestion: {
+                'requestId': event.questionRequestId,
+                'sessionId': event.sessionId,
+                'questions': event.questions,
+              },
+            );
+            break;
+
           case StreamEventType.init:
           case StreamEventType.unknown:
             // Ignore init and unknown events
@@ -1640,6 +1665,53 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
   /// Dismiss the session unavailable dialog without retrying
   void dismissSessionUnavailable() {
     state = state.copyWith(clearSessionUnavailable: true);
+  }
+
+  /// Answer a pending user question (from AskUserQuestion tool)
+  ///
+  /// [answers] is a map of question -> answer(s)
+  /// Returns true if the answer was successfully submitted
+  Future<bool> answerQuestion(Map<String, dynamic> answers) async {
+    final pending = state.pendingUserQuestion;
+    if (pending == null) {
+      debugPrint('[ChatMessagesNotifier] No pending user question to answer');
+      return false;
+    }
+
+    final sessionId = pending['sessionId'] as String?;
+    final requestId = pending['requestId'] as String?;
+    if (sessionId == null || requestId == null) {
+      debugPrint('[ChatMessagesNotifier] Missing sessionId or requestId in pending question');
+      return false;
+    }
+
+    debugPrint('[ChatMessagesNotifier] Answering question $requestId with: $answers');
+
+    try {
+      final success = await _service.answerQuestion(
+        sessionId: sessionId,
+        requestId: requestId,
+        answers: answers,
+      );
+
+      if (success) {
+        // Clear the pending question
+        state = state.copyWith(clearPendingUserQuestion: true);
+        debugPrint('[ChatMessagesNotifier] Question answered successfully');
+      } else {
+        debugPrint('[ChatMessagesNotifier] Failed to submit answer');
+      }
+
+      return success;
+    } catch (e) {
+      debugPrint('[ChatMessagesNotifier] Error answering question: $e');
+      return false;
+    }
+  }
+
+  /// Dismiss the pending user question without answering
+  void dismissPendingQuestion() {
+    state = state.copyWith(clearPendingUserQuestion: true);
   }
 }
 
