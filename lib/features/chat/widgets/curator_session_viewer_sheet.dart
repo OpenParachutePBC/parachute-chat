@@ -483,10 +483,8 @@ class _ToolCallChipState extends State<_ToolCallChip> {
     switch (toolName) {
       case 'update_title':
         return Icons.title;
-      case 'update_context':
+      case 'log_activity':
         return Icons.note_add;
-      case 'list_context_files':
-        return Icons.folder_open;
       case 'get_session_info':
         return Icons.info_outline;
       default:
@@ -765,11 +763,11 @@ class _TaskCard extends StatelessWidget {
                       label: 'Title',
                       color: BrandColors.forest,
                     ),
-                  if (task.result!.contextUpdated)
+                  if (task.result!.logged)
                     _buildChip(
                       isDark,
                       icon: Icons.note_add,
-                      label: 'Context',
+                      label: 'Logged',
                       color: BrandColors.warning,
                     ),
                   if (task.result!.noChanges)

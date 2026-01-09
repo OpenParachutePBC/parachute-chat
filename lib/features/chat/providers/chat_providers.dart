@@ -1370,7 +1370,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
 
           case StreamEventType.done:
             // Stream complete - handle differently for background vs foreground
-            debugPrint('[ChatMessagesNotifier] Done event received (background: $isBackgroundStream, sessionId: $sessionId)');
+            debugPrint('[ChatMessagesNotifier] Done event received (background: $isBackgroundStream, sessionId: $displaySessionId)');
 
             if (!isBackgroundStream) {
               // Foreground: update UI normally
@@ -1417,7 +1417,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
               }
             } else {
               // Background: stream completed while user was on another session
-              debugPrint('[ChatMessagesNotifier] Background stream completed for session: $sessionId');
+              debugPrint('[ChatMessagesNotifier] Background stream completed for session: $displaySessionId');
             }
             // Always refresh sessions list to get updated title
             _ref.invalidate(chatSessionsProvider);
@@ -1438,7 +1438,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
               _updateAssistantMessage(accumulatedContent, isStreaming: false);
             } else {
               // Background: just log it
-              debugPrint('[ChatMessagesNotifier] Background stream error for session $sessionId: $errorMsg');
+              debugPrint('[ChatMessagesNotifier] Background stream error for session $displaySessionId: $errorMsg');
             }
             break;
 
@@ -1905,6 +1905,7 @@ final curatorInfoProvider = FutureProvider.family<CuratorInfo, String>((ref, ses
 ///
 /// Fetches the curator's full conversation history showing what
 /// context it was fed and how it made decisions.
+/// The curator is a persistent SDK session, so we can view its transcript.
 /// Use with .family to specify the session ID:
 /// - ref.watch(curatorMessagesProvider(sessionId))
 final curatorMessagesProvider = FutureProvider.family<CuratorMessages, String>((ref, sessionId) async {
@@ -1916,15 +1917,15 @@ final curatorMessagesProvider = FutureProvider.family<CuratorMessages, String>((
 ///
 /// Returns a function that triggers the curator for a session.
 /// Usage: await ref.read(triggerCuratorProvider)(sessionId);
-final triggerCuratorProvider = Provider<Future<CuratorTask> Function(String)>((ref) {
+final triggerCuratorProvider = Provider<Future<int> Function(String)>((ref) {
   final service = ref.watch(chatServiceProvider);
   return (String sessionId) async {
-    final task = await service.triggerCurator(sessionId);
+    final taskId = await service.triggerCurator(sessionId);
     // Invalidate the curator info to refresh the task list
     ref.invalidate(curatorInfoProvider(sessionId));
     // Also refresh sessions list in case title was updated
     ref.invalidate(chatSessionsProvider);
-    return task;
+    return taskId;
   };
 });
 

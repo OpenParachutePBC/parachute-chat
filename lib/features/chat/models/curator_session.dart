@@ -49,14 +49,16 @@ extension CuratorTaskStatusExtension on CuratorTaskStatus {
   }
 }
 
-/// Represents a curator session linked to a chat session
+/// Represents a curator session linked to a chat session.
+///
+/// The curator is a PERSISTENT SDK session that runs alongside each chat.
+/// It maintains its own conversation history and can be viewed separately.
 class CuratorSession {
   final String id;
   final String parentSessionId;
   final String? sdkSessionId;
   final DateTime? lastRunAt;
   final int lastMessageIndex;
-  final List<String> contextFiles;
   final DateTime createdAt;
 
   const CuratorSession({
@@ -65,7 +67,6 @@ class CuratorSession {
     this.sdkSessionId,
     this.lastRunAt,
     this.lastMessageIndex = 0,
-    this.contextFiles = const [],
     required this.createdAt,
   });
 
@@ -78,10 +79,6 @@ class CuratorSession {
           ? DateTime.parse(json['last_run_at'] as String)
           : null,
       lastMessageIndex: json['last_message_index'] as int? ?? 0,
-      contextFiles: (json['context_files'] as List<dynamic>?)
-              ?.map((e) => e as String)
-              .toList() ??
-          [],
       createdAt: DateTime.parse(json['created_at'] as String),
     );
   }
@@ -93,12 +90,11 @@ class CuratorSession {
       'sdk_session_id': sdkSessionId,
       'last_run_at': lastRunAt?.toIso8601String(),
       'last_message_index': lastMessageIndex,
-      'context_files': contextFiles,
       'created_at': createdAt.toIso8601String(),
     };
   }
 
-  /// Whether this curator has an SDK session for viewing messages
+  /// Whether this curator has an SDK session (has been run at least once)
   bool get hasSdkSession => sdkSessionId != null;
 }
 
@@ -106,20 +102,16 @@ class CuratorSession {
 class CuratorTaskResult {
   final bool titleUpdated;
   final String? newTitle;
-  final bool contextUpdated;
+  final bool logged;
   final List<String> actions;
-  final String? reasoning;
   final String? error;
-  final String? sdkSessionId;
 
   const CuratorTaskResult({
     this.titleUpdated = false,
     this.newTitle,
-    this.contextUpdated = false,
+    this.logged = false,
     this.actions = const [],
-    this.reasoning,
     this.error,
-    this.sdkSessionId,
   });
 
   factory CuratorTaskResult.fromJson(Map<String, dynamic>? json) {
@@ -129,22 +121,20 @@ class CuratorTaskResult {
     return CuratorTaskResult(
       titleUpdated: json['title_updated'] as bool? ?? false,
       newTitle: json['new_title'] as String?,
-      contextUpdated: json['context_updated'] as bool? ?? false,
+      logged: json['logged'] as bool? ?? false,
       actions: (json['actions'] as List<dynamic>?)
               ?.map((e) => e as String)
               .toList() ??
           [],
-      reasoning: json['reasoning'] as String?,
       error: json['error'] as String?,
-      sdkSessionId: json['sdk_session_id'] as String?,
     );
   }
 
   /// Whether any updates were made
-  bool get hasUpdates => titleUpdated || contextUpdated;
+  bool get hasUpdates => titleUpdated || logged;
 
   /// Whether this task had no changes
-  bool get noChanges => !titleUpdated && !contextUpdated && error == null;
+  bool get noChanges => !titleUpdated && !logged && error == null;
 }
 
 /// Represents a queued curator task
@@ -298,7 +288,7 @@ class CuratorToolCall {
   }
 }
 
-/// Response containing curator messages
+/// Response containing curator messages (the curator's conversation history)
 class CuratorMessages {
   final List<CuratorMessage> messages;
   final String? sdkSessionId;
@@ -353,6 +343,9 @@ class CuratorInfo {
 
   /// Whether a curator exists for this session
   bool get hasCurator => curatorSession != null;
+
+  /// Whether the curator has an SDK session (can view messages)
+  bool get hasSdkSession => curatorSession?.hasSdkSession ?? false;
 
   /// Most recent task (if any)
   CuratorTask? get mostRecentTask =>
