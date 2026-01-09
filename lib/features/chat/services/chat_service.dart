@@ -414,89 +414,6 @@ class ChatService {
     }
   }
 
-  /// Join an existing active stream
-  ///
-  /// Connects to an in-progress stream and receives:
-  /// 1. Buffered events (for catch-up)
-  /// 2. Live events as they occur
-  ///
-  /// Use this when returning to a chat that has an active stream.
-  /// Returns null if no active stream exists (404 from server).
-  Stream<StreamEvent>? joinStream(String sessionId) {
-    debugPrint('[ChatService] Joining stream for session: $sessionId');
-
-    // Create a stream controller to handle the connection
-    final controller = StreamController<StreamEvent>();
-
-    // Make the SSE request
-    _joinStreamConnection(sessionId, controller);
-
-    return controller.stream;
-  }
-
-  Future<void> _joinStreamConnection(
-    String sessionId,
-    StreamController<StreamEvent> controller,
-  ) async {
-    try {
-      final request = http.Request(
-        'GET',
-        Uri.parse('$baseUrl/api/chat/${Uri.encodeComponent(sessionId)}/join'),
-      );
-      request.headers['Accept'] = 'text/event-stream';
-
-      final streamedResponse = await _client.send(request).timeout(
-        const Duration(seconds: 10),
-      );
-
-      if (streamedResponse.statusCode == 404) {
-        debugPrint('[ChatService] No active stream to join for $sessionId');
-        controller.close();
-        return;
-      }
-
-      if (streamedResponse.statusCode != 200) {
-        debugPrint('[ChatService] Failed to join stream: ${streamedResponse.statusCode}');
-        controller.addError('Failed to join stream: ${streamedResponse.statusCode}');
-        controller.close();
-        return;
-      }
-
-      String buffer = '';
-
-      await for (final chunk in streamedResponse.stream.transform(utf8.decoder)) {
-        buffer += chunk;
-
-        // Process complete lines (SSE format)
-        while (buffer.contains('\n')) {
-          final newlineIndex = buffer.indexOf('\n');
-          final line = buffer.substring(0, newlineIndex).trim();
-          buffer = buffer.substring(newlineIndex + 1);
-
-          if (line.isEmpty) continue;
-
-          final event = StreamEvent.parse(line);
-          if (event != null) {
-            debugPrint('[ChatService] Join event: ${event.type}');
-            controller.add(event);
-
-            if (event.type == StreamEventType.done ||
-                event.type == StreamEventType.error) {
-              break;
-            }
-          }
-        }
-      }
-
-      debugPrint('[ChatService] Join stream completed for $sessionId');
-      controller.close();
-    } catch (e) {
-      debugPrint('[ChatService] Error joining stream: $e');
-      controller.addError(e);
-      controller.close();
-    }
-  }
-
   /// Get the full SDK transcript for a session
   ///
   /// Returns rich event history including tool calls, thinking blocks, etc.
@@ -930,7 +847,7 @@ class ChatService {
   /// If not provided, server uses default context (general-context.md)
   /// [attachments] - List of file attachments to include with the message
   Stream<StreamEvent> streamChat({
-    required String sessionId,
+    String? sessionId,  // null for new sessions - server will assign ID
     required String message,
     String? systemPrompt,
     String? initialContext,
@@ -941,7 +858,7 @@ class ChatService {
     List<ChatAttachment>? attachments,
   }) async* {
     debugPrint('[ChatService] Starting stream chat');
-    debugPrint('[ChatService] Session: $sessionId');
+    debugPrint('[ChatService] Session: ${sessionId ?? "new"}');
     debugPrint('[ChatService] Message: ${message.substring(0, message.length.clamp(0, 50))}...');
     debugPrint('[ChatService] priorConversation provided: ${priorConversation != null}');
     if (priorConversation != null) {
@@ -956,7 +873,7 @@ class ChatService {
     request.headers['Content-Type'] = 'application/json';
     final requestBody = {
       'message': message,
-      'sessionId': sessionId,
+      'sessionId': sessionId ?? 'new',  // 'new' tells server to create new session
       'module': 'chat',
       if (systemPrompt != null) 'systemPrompt': systemPrompt,
       if (initialContext != null) 'initialContext': initialContext,
