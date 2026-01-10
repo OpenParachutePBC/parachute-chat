@@ -6,6 +6,7 @@ class McpServer {
   final List<String>? args;
   final Map<String, String>? env;
   final String? url;
+  final Map<String, String>? headers; // Custom headers for HTTP servers
   final String? description;
   final String displayType;
   final String displayCommand;
@@ -23,6 +24,7 @@ class McpServer {
     this.args,
     this.env,
     this.url,
+    this.headers,
     this.description,
     String? displayType,
     String? displayCommand,
@@ -44,6 +46,7 @@ class McpServer {
       args: (json['args'] as List<dynamic>?)?.cast<String>(),
       env: (json['env'] as Map<String, dynamic>?)?.cast<String, String>(),
       url: json['url'] as String?,
+      headers: (json['headers'] as Map<String, dynamic>?)?.cast<String, String>(),
       description: json['_description'] as String?,
       displayType: json['displayType'] as String?,
       displayCommand: json['displayCommand'] as String?,
@@ -61,6 +64,7 @@ class McpServer {
     if (args != null) config['args'] = args;
     if (env != null) config['env'] = env;
     if (url != null) config['url'] = url;
+    if (headers != null) config['headers'] = headers;
     if (description != null) config['_description'] = description;
     if (auth != null) config['auth'] = auth;
     if (scopes != null) config['scopes'] = scopes;

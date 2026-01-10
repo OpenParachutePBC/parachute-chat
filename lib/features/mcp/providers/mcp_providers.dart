@@ -100,12 +100,14 @@ Future<McpServer> addHttpMcpServer(
   required String name,
   required String url,
   String? description,
+  Map<String, String>? headers,
 }) async {
   final service = ref.read(mcpServiceProvider);
   final result = await service.addHttpServer(
     name: name,
     url: url,
     description: description,
+    headers: headers,
   );
   ref.invalidate(mcpServersProvider);
   return result;

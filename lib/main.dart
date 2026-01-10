@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/theme/app_theme.dart';
 import 'core/services/logging_service.dart';
+import 'core/services/transcription_service.dart';
 import 'features/onboarding/screens/onboarding_flow.dart';
 import 'features/chat/screens/agent_hub_screen.dart';
 
@@ -31,7 +32,34 @@ void main() async {
     return true;
   };
 
+  // Initialize transcription service (Parakeet) in background
+  // Don't await - let it initialize while app loads
+  _initializeTranscription();
+
   runApp(const ProviderScope(child: ParachuteChatApp()));
+}
+
+/// Initialize transcription model in background for faster voice input
+void _initializeTranscription() async {
+  try {
+    logger.info('TranscriptionInit', 'Starting transcription model initialization...');
+    final transcriptionService = TranscriptionService();
+
+    await transcriptionService.initialize(
+      onProgress: (progress) {
+        debugPrint('[Main] Transcription init progress: ${(progress * 100).toInt()}%');
+      },
+      onStatus: (status) {
+        debugPrint('[Main] Transcription init status: $status');
+      },
+    );
+
+    logger.info('TranscriptionInit', 'Transcription model initialized successfully');
+    debugPrint('[Main] ✅ Transcription model ready');
+  } catch (e, stackTrace) {
+    logger.captureException(e, stackTrace: stackTrace, tag: 'TranscriptionInit');
+    debugPrint('[Main] ⚠️ Failed to initialize transcription: $e');
+  }
 }
 
 class ParachuteChatApp extends StatelessWidget {

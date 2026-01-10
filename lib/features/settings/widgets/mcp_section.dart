@@ -39,6 +39,9 @@ class _McpSectionState extends ConsumerState<McpSection> {
   /// Environment variables as a list of key-value pairs for the form
   final List<_EnvVar> _envVars = [];
 
+  /// HTTP headers as a list of key-value pairs for remote servers
+  final List<_Header> _headers = [];
+
   /// Status of each MCP server (name -> test result)
   final Map<String, McpTestResult> _serverStatus = {};
 
@@ -73,6 +76,9 @@ class _McpSectionState extends ConsumerState<McpSection> {
     for (final env in _envVars) {
       env.dispose();
     }
+    for (final header in _headers) {
+      header.dispose();
+    }
     super.dispose();
   }
 
@@ -86,6 +92,10 @@ class _McpSectionState extends ConsumerState<McpSection> {
       env.dispose();
     }
     _envVars.clear();
+    for (final header in _headers) {
+      header.dispose();
+    }
+    _headers.clear();
     setState(() {
       _isEditing = false;
       _editingServerName = null;
@@ -108,6 +118,17 @@ class _McpSectionState extends ConsumerState<McpSection> {
     if (server.env != null) {
       for (final entry in server.env!.entries) {
         _envVars.add(_EnvVar(key: entry.key, value: entry.value));
+      }
+    }
+
+    // Load headers for remote servers
+    for (final header in _headers) {
+      header.dispose();
+    }
+    _headers.clear();
+    if (server.headers != null) {
+      for (final entry in server.headers!.entries) {
+        _headers.add(_Header(key: entry.key, value: entry.value));
       }
     }
 
@@ -373,11 +394,25 @@ class _McpSectionState extends ConsumerState<McpSection> {
       if (_isRemoteServer) {
         // Remote (HTTP) server
         final url = _urlController.text.trim();
+
+        // Build headers map from non-empty entries
+        final Map<String, String>? headers = _headers.isEmpty
+            ? null
+            : Map.fromEntries(
+                _headers
+                    .where((h) => h.keyController.text.trim().isNotEmpty)
+                    .map((h) => MapEntry(
+                          h.keyController.text.trim(),
+                          h.valueController.text.trim(),
+                        )),
+              );
+
         await addHttpMcpServer(
           ref,
           name: name,
           url: url,
           description: description.isEmpty ? null : description,
+          headers: headers?.isEmpty == true ? null : headers,
         );
       } else {
         // Stdio server
@@ -992,6 +1027,19 @@ class _McpSectionState extends ConsumerState<McpSection> {
     });
   }
 
+  void _addHeader() {
+    setState(() {
+      _headers.add(_Header());
+    });
+  }
+
+  void _removeHeader(int index) {
+    setState(() {
+      _headers[index].dispose();
+      _headers.removeAt(index);
+    });
+  }
+
   Widget _buildEnvVarsSection(bool isDark) {
     final textColor = isDark ? BrandColors.nightText : BrandColors.charcoal;
     final subtitleColor = isDark
@@ -1143,6 +1191,169 @@ class _McpSectionState extends ConsumerState<McpSection> {
                   IconButton(
                     icon: Icon(Icons.close, color: BrandColors.error, size: 18),
                     onPressed: () => _removeEnvVar(index),
+                    tooltip: 'Remove',
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildHeadersSection(bool isDark) {
+    final textColor = isDark ? BrandColors.nightText : BrandColors.charcoal;
+    final subtitleColor = isDark
+        ? BrandColors.nightTextSecondary
+        : BrandColors.driftwood;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.http_outlined,
+                  size: 18,
+                  color: BrandColors.turquoise,
+                ),
+                SizedBox(width: Spacing.sm),
+                Text(
+                  'HTTP Headers',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: TypographyTokens.bodyMedium,
+                    color: textColor,
+                  ),
+                ),
+              ],
+            ),
+            TextButton.icon(
+              onPressed: _addHeader,
+              icon: const Icon(Icons.add, size: 16),
+              label: const Text('Add'),
+              style: TextButton.styleFrom(
+                foregroundColor: BrandColors.turquoise,
+                visualDensity: VisualDensity.compact,
+              ),
+            ),
+          ],
+        ),
+        SizedBox(height: Spacing.xs),
+        Text(
+          'Custom headers sent with requests (e.g., Authorization)',
+          style: TextStyle(
+            fontSize: TypographyTokens.labelSmall,
+            color: subtitleColor,
+          ),
+        ),
+        if (_headers.isEmpty) ...[
+          SizedBox(height: Spacing.md),
+          Container(
+            padding: EdgeInsets.all(Spacing.md),
+            decoration: BoxDecoration(
+              color: isDark
+                  ? BrandColors.nightSurface
+                  : BrandColors.stone.withValues(alpha: 0.3),
+              borderRadius: BorderRadius.circular(Radii.sm),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.info_outline,
+                  size: 16,
+                  color: subtitleColor,
+                ),
+                SizedBox(width: Spacing.sm),
+                Expanded(
+                  child: Text(
+                    'No custom headers configured',
+                    style: TextStyle(
+                      fontSize: TypographyTokens.labelSmall,
+                      color: subtitleColor,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ] else ...[
+          SizedBox(height: Spacing.md),
+          ..._headers.asMap().entries.map((entry) {
+            final index = entry.key;
+            final header = entry.value;
+            return Padding(
+              padding: EdgeInsets.only(bottom: Spacing.sm),
+              child: Row(
+                children: [
+                  // Key field
+                  Expanded(
+                    flex: 2,
+                    child: TextFormField(
+                      controller: header.keyController,
+                      decoration: InputDecoration(
+                        labelText: 'Header Name',
+                        hintText: 'Authorization',
+                        isDense: true,
+                        border: const OutlineInputBorder(),
+                        filled: true,
+                        fillColor: isDark
+                            ? BrandColors.nightSurface
+                            : BrandColors.cream.withValues(alpha: 0.5),
+                      ),
+                      style: const TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                  SizedBox(width: Spacing.sm),
+                  // Value field
+                  Expanded(
+                    flex: 3,
+                    child: TextFormField(
+                      controller: header.valueController,
+                      obscureText: header.obscured,
+                      decoration: InputDecoration(
+                        labelText: 'Value',
+                        hintText: 'Bearer sk-...',
+                        isDense: true,
+                        border: const OutlineInputBorder(),
+                        filled: true,
+                        fillColor: isDark
+                            ? BrandColors.nightSurface
+                            : BrandColors.cream.withValues(alpha: 0.5),
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            header.obscured
+                                ? Icons.visibility_off
+                                : Icons.visibility,
+                            size: 18,
+                          ),
+                          onPressed: () {
+                            setState(() {
+                              header.obscured = !header.obscured;
+                            });
+                          },
+                          tooltip: header.obscured ? 'Show' : 'Hide',
+                        ),
+                      ),
+                      style: const TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                  SizedBox(width: Spacing.xs),
+                  // Delete button
+                  IconButton(
+                    icon: Icon(Icons.close, color: BrandColors.error, size: 18),
+                    onPressed: () => _removeHeader(index),
                     tooltip: 'Remove',
                     visualDensity: VisualDensity.compact,
                   ),
@@ -1502,8 +1713,8 @@ class _McpSectionState extends ConsumerState<McpSection> {
                                 tooltip: 'Test server',
                                 visualDensity: VisualDensity.compact,
                               ),
-                        // Don't show edit for built-in or remote servers (config is different)
-                        if (!server.builtin && server.isStdio)
+                        // Don't show edit for built-in servers
+                        if (!server.builtin)
                           IconButton(
                             icon: Icon(Icons.edit_outlined,
                                 color: BrandColors.turquoise, size: 20),
@@ -1936,6 +2147,12 @@ class _McpSectionState extends ConsumerState<McpSection> {
               _buildEnvVarsSection(isDark),
             ],
 
+            // Headers section (only for remote servers)
+            if (_isRemoteServer) ...[
+              SizedBox(height: Spacing.lg),
+              _buildHeadersSection(isDark),
+            ],
+
             SizedBox(height: Spacing.lg),
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
@@ -2213,6 +2430,23 @@ class _EnvVar {
   bool obscured;
 
   _EnvVar({String key = '', String value = ''})
+      : keyController = TextEditingController(text: key),
+        valueController = TextEditingController(text: value),
+        obscured = true;
+
+  void dispose() {
+    keyController.dispose();
+    valueController.dispose();
+  }
+}
+
+/// Helper class for managing HTTP header form fields
+class _Header {
+  final TextEditingController keyController;
+  final TextEditingController valueController;
+  bool obscured;
+
+  _Header({String key = '', String value = ''})
       : keyController = TextEditingController(text: key),
         valueController = TextEditingController(text: value),
         obscured = true;

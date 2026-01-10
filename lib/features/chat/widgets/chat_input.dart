@@ -6,7 +6,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute_chat/core/theme/design_tokens.dart';
 import 'package:parachute_chat/core/providers/voice_input_providers.dart';
+import 'package:parachute_chat/core/providers/streaming_voice_providers.dart';
 import 'package:parachute_chat/core/services/voice_input_service.dart';
+import 'package:parachute_chat/core/services/streaming_voice_service.dart';
 import '../models/attachment.dart';
 
 /// Text input field for chat messages with voice input and attachment support
@@ -44,6 +46,11 @@ class _ChatInputState extends ConsumerState<ChatInput>
   // Pending attachments
   final List<ChatAttachment> _attachments = [];
   bool _isLoadingAttachment = false;
+
+  // Streaming transcription
+  final bool _useStreamingTranscription = true; // Enable streaming by default
+  bool _isStreamingRecording = false;
+  bool _isProcessingStreamingStop = false; // Processing state for smooth transitions
 
   @override
   void initState() {
@@ -152,6 +159,15 @@ class _ChatInputState extends ConsumerState<ChatInput>
   }
 
   Future<void> _handleVoiceInput() async {
+    if (_useStreamingTranscription) {
+      await _handleStreamingVoiceInput();
+    } else {
+      await _handleStandardVoiceInput();
+    }
+  }
+
+  /// Standard voice input (record all → transcribe once)
+  Future<void> _handleStandardVoiceInput() async {
     final voiceService = ref.read(voiceInputServiceProvider);
 
     if (voiceService.isRecording) {
@@ -181,6 +197,62 @@ class _ChatInputState extends ConsumerState<ChatInput>
     }
   }
 
+  /// Streaming voice input (real-time transcription feedback)
+  Future<void> _handleStreamingVoiceInput() async {
+    final streamingService = ref.read(streamingVoiceServiceProvider);
+
+    if (_isStreamingRecording) {
+      // Stop streaming recording - show processing state while finalizing
+      _pulseController.stop();
+      setState(() {
+        _isProcessingStreamingStop = true;
+      });
+
+      try {
+        // Stop recording first - this flushes final audio and may add more text
+        final audioPath = await streamingService.stopRecording();
+
+        // Get the transcript AFTER stopping - includes any text from final flush
+        final transcript = streamingService.getStreamingTranscript();
+
+        // Now update UI state
+        setState(() {
+          _isStreamingRecording = false;
+          _isProcessingStreamingStop = false;
+        });
+
+        if (audioPath != null && transcript.isNotEmpty) {
+          // Append to existing text
+          final currentText = _controller.text;
+          if (currentText.isNotEmpty && !currentText.endsWith(' ')) {
+            _controller.text = '$currentText $transcript';
+          } else {
+            _controller.text = currentText + transcript;
+          }
+          // Move cursor to end
+          _controller.selection = TextSelection.collapsed(
+            offset: _controller.text.length,
+          );
+        }
+      } catch (e) {
+        debugPrint('[ChatInput] Error stopping streaming recording: $e');
+        setState(() {
+          _isStreamingRecording = false;
+          _isProcessingStreamingStop = false;
+        });
+      }
+    } else {
+      // Start streaming recording
+      final started = await streamingService.startRecording();
+      if (started) {
+        setState(() {
+          _isStreamingRecording = true;
+        });
+        _pulseController.repeat(reverse: true);
+      }
+    }
+  }
+
   String _formatDuration(Duration duration) {
     final minutes = duration.inMinutes.remainder(60).toString().padLeft(2, '0');
     final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
@@ -192,16 +264,24 @@ class _ChatInputState extends ConsumerState<ChatInput>
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
-    // Watch voice input state
+    // Watch voice input state (standard mode)
     final voiceState = ref.watch(voiceInputCurrentStateProvider);
-    final isRecording = voiceState == VoiceInputState.recording;
+    final isStandardRecording = voiceState == VoiceInputState.recording;
     final isTranscribing = voiceState == VoiceInputState.transcribing;
 
-    // Watch recording duration
-    final durationAsync = ref.watch(voiceInputDurationProvider);
-    final duration = durationAsync.valueOrNull ?? Duration.zero;
+    // Watch streaming transcription state
+    final streamingState = ref.watch(streamingVoiceCurrentStateProvider);
+    final isRecording = _useStreamingTranscription
+        ? _isStreamingRecording
+        : isStandardRecording;
 
-    // Listen for errors
+    // Get duration from appropriate source
+    final durationAsync = ref.watch(voiceInputDurationProvider);
+    final duration = _useStreamingTranscription
+        ? streamingState.recordingDuration
+        : (durationAsync.valueOrNull ?? Duration.zero);
+
+    // Listen for errors (standard mode)
     ref.listen(voiceInputErrorProvider, (previous, next) {
       next.whenData((error) {
         if (error.isNotEmpty) {
@@ -235,12 +315,20 @@ class _ChatInputState extends ConsumerState<ChatInput>
             if (_attachments.isNotEmpty)
               _buildAttachmentPreviews(isDark),
 
-            // Recording indicator (shown when recording)
-            if (isRecording)
+            // Processing indicator (shown while finalizing recording)
+            if (_isProcessingStreamingStop && _useStreamingTranscription)
+              _buildFinalizingIndicator(isDark, streamingState),
+
+            // Streaming transcript display (shown when streaming recording)
+            if (_isStreamingRecording && !_isProcessingStreamingStop && _useStreamingTranscription)
+              _buildStreamingTranscriptDisplay(isDark, streamingState),
+
+            // Recording indicator (shown when recording without streaming UI)
+            if (isRecording && !_useStreamingTranscription)
               _buildRecordingIndicator(isDark, duration),
 
-            // Transcribing indicator
-            if (isTranscribing)
+            // Transcribing indicator (standard mode only)
+            if (isTranscribing && !_useStreamingTranscription)
               _buildTranscribingIndicator(isDark),
 
             Row(
@@ -478,6 +566,232 @@ class _ChatInputState extends ConsumerState<ChatInput>
               fontWeight: FontWeight.w500,
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  /// Build streaming transcript display with real-time feedback
+  Widget _buildStreamingTranscriptDisplay(bool isDark, StreamingTranscriptionState state) {
+    final hasConfirmed = state.confirmedSegments.isNotEmpty;
+    final hasInterim = state.interimText != null && state.interimText!.isNotEmpty;
+    final hasText = hasConfirmed || hasInterim;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: Spacing.sm),
+      padding: const EdgeInsets.all(Spacing.sm),
+      decoration: BoxDecoration(
+        color: isDark
+            ? BrandColors.nightSurfaceElevated.withValues(alpha: 0.5)
+            : BrandColors.cream.withValues(alpha: 0.5),
+        borderRadius: Radii.card,
+        border: Border.all(
+          color: isDark ? BrandColors.nightSurfaceElevated : BrandColors.stone,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header with recording status and duration
+          Row(
+            children: [
+              // Pulsing red dot
+              AnimatedBuilder(
+                animation: _pulseController,
+                builder: (context, child) {
+                  final opacity = 0.5 + (_pulseController.value * 0.5);
+                  return Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: BrandColors.error.withValues(alpha: opacity),
+                      shape: BoxShape.circle,
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(width: Spacing.xs),
+              Text(
+                _formatDuration(state.recordingDuration),
+                style: TextStyle(
+                  color: BrandColors.error,
+                  fontSize: TypographyTokens.labelSmall,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(width: Spacing.sm),
+              // Model status indicator
+              _buildModelStatusIndicator(isDark, state.modelStatus),
+            ],
+          ),
+
+          // Transcript content
+          if (hasText) ...[
+            const SizedBox(height: Spacing.xs),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 120),
+              child: SingleChildScrollView(
+                reverse: true, // Auto-scroll to bottom
+                child: RichText(
+                  text: TextSpan(
+                    style: TextStyle(
+                      color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+                      fontSize: TypographyTokens.bodyMedium,
+                      height: 1.4,
+                    ),
+                    children: [
+                      // Confirmed segments (solid text)
+                      if (hasConfirmed)
+                        TextSpan(text: state.confirmedSegments.join(' ')),
+
+                      // Interim text (gray, italic)
+                      if (hasInterim) ...[
+                        if (hasConfirmed) const TextSpan(text: ' '),
+                        TextSpan(
+                          text: state.interimText!,
+                          style: TextStyle(
+                            color: isDark
+                                ? BrandColors.nightTextSecondary
+                                : BrandColors.driftwood,
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ] else ...[
+            const SizedBox(height: Spacing.xs),
+            Text(
+              state.modelStatus == TranscriptionModelStatus.initializing
+                  ? 'Initializing transcription...'
+                  : 'Listening...',
+              style: TextStyle(
+                color: isDark
+                    ? BrandColors.nightTextSecondary
+                    : BrandColors.driftwood,
+                fontSize: TypographyTokens.bodySmall,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Build model status indicator
+  Widget _buildModelStatusIndicator(bool isDark, TranscriptionModelStatus status) {
+    String text;
+    Color color;
+    bool showSpinner = false;
+
+    switch (status) {
+      case TranscriptionModelStatus.notInitialized:
+      case TranscriptionModelStatus.initializing:
+        text = 'Initializing...';
+        color = isDark ? BrandColors.nightTurquoise : BrandColors.turquoise;
+        showSpinner = true;
+        break;
+      case TranscriptionModelStatus.ready:
+        text = 'Listening';
+        color = isDark ? BrandColors.nightForest : BrandColors.forest;
+        break;
+      case TranscriptionModelStatus.error:
+        text = 'Error';
+        color = BrandColors.error;
+        break;
+    }
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (showSpinner) ...[
+          SizedBox(
+            width: 10,
+            height: 10,
+            child: CircularProgressIndicator(
+              strokeWidth: 1.5,
+              color: color,
+            ),
+          ),
+          const SizedBox(width: Spacing.xs),
+        ],
+        Text(
+          text,
+          style: TextStyle(
+            color: color,
+            fontSize: TypographyTokens.labelSmall,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Build finalizing indicator (shown while processing stop)
+  Widget _buildFinalizingIndicator(bool isDark, StreamingTranscriptionState state) {
+    final hasText = state.confirmedSegments.isNotEmpty ||
+        (state.interimText != null && state.interimText!.isNotEmpty);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: Spacing.sm),
+      padding: const EdgeInsets.all(Spacing.sm),
+      decoration: BoxDecoration(
+        color: isDark
+            ? BrandColors.nightSurfaceElevated.withValues(alpha: 0.5)
+            : BrandColors.cream.withValues(alpha: 0.5),
+        borderRadius: Radii.card,
+        border: Border.all(
+          color: isDark ? BrandColors.nightSurfaceElevated : BrandColors.stone,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header with finalizing status
+          Row(
+            children: [
+              SizedBox(
+                width: 12,
+                height: 12,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
+                ),
+              ),
+              const SizedBox(width: Spacing.sm),
+              Text(
+                'Finalizing...',
+                style: TextStyle(
+                  color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
+                  fontSize: TypographyTokens.labelSmall,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+
+          // Show the transcript captured so far
+          if (hasText) ...[
+            const SizedBox(height: Spacing.xs),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 80),
+              child: SingleChildScrollView(
+                reverse: true,
+                child: Text(
+                  state.displayText,
+                  style: TextStyle(
+                    color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+                    fontSize: TypographyTokens.bodyMedium,
+                    height: 1.4,
+                  ),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
