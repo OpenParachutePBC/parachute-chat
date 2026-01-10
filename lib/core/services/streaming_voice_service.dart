@@ -64,9 +64,9 @@ class StreamingTranscriptionState {
   /// Get all text (confirmed + interim) for display
   /// Uses single newlines between segments for natural flow
   String get displayText {
-    final confirmed = confirmedSegments.join('\n');
+    final confirmed = confirmedSegments.join(' ').trim();
     if (interimText != null && interimText!.isNotEmpty) {
-      return confirmed.isEmpty ? interimText! : '$confirmed\n$interimText';
+      return confirmed.isEmpty ? interimText! : '$confirmed $interimText';
     }
     return confirmed;
   }
@@ -476,23 +476,11 @@ class StreamingVoiceService {
       // Update interim text
       String newInterimText = result.text.trim();
 
-      // Remove text already in confirmed segments
+      // Remove overlap with confirmed text using fuzzy matching
+      // Only strip from the END of confirmed (prefix of interim), not arbitrary matches
       if (newInterimText.isNotEmpty && _confirmedSegments.isNotEmpty) {
-        final lastConfirmed = _confirmedSegments.last.trim().toLowerCase();
-        final interimLower = newInterimText.toLowerCase();
-
-        if (interimLower.startsWith(lastConfirmed)) {
-          newInterimText = newInterimText.substring(lastConfirmed.length).trim();
-        } else {
-          // Check for partial overlap
-          for (int i = min(lastConfirmed.length, 50); i >= 10; i--) {
-            final suffix = lastConfirmed.substring(lastConfirmed.length - i);
-            if (interimLower.startsWith(suffix)) {
-              newInterimText = newInterimText.substring(i).trim();
-              break;
-            }
-          }
-        }
+        final allConfirmed = _confirmedSegments.join(' ').trim();
+        newInterimText = _removeOverlapFuzzy(allConfirmed, newInterimText);
       }
 
       if (newInterimText.isNotEmpty && newInterimText != _interimText) {
@@ -515,6 +503,113 @@ class StreamingVoiceService {
     } finally {
       _isReTranscribing = false;
     }
+  }
+
+  /// Remove overlap between confirmed text and new interim text using fuzzy matching
+  /// Only removes from the END of confirmed that matches the BEGINNING of interim
+  String _removeOverlapFuzzy(String confirmed, String interim) {
+    if (confirmed.isEmpty || interim.isEmpty) return interim;
+
+    // Normalize for comparison (lowercase, collapse whitespace)
+    String normalize(String s) => s.toLowerCase().replaceAll(RegExp(r'\s+'), ' ').trim();
+
+    final confirmedNorm = normalize(confirmed);
+    final interimNorm = normalize(interim);
+
+    // Case 1: Confirmed is a prefix of interim (exact or fuzzy)
+    if (interimNorm.startsWith(confirmedNorm)) {
+      // Find where to cut in original interim (accounting for whitespace differences)
+      return _cutMatchingPrefix(interim, confirmed.length);
+    }
+
+    // Case 2: Find longest suffix of confirmed that matches prefix of interim
+    // Use word-based matching for fuzziness
+    final confirmedWords = confirmedNorm.split(' ');
+    final interimWords = interimNorm.split(' ');
+
+    // Try matching last N words of confirmed with first N words of interim
+    int bestMatchWords = 0;
+    for (int n = min(confirmedWords.length, interimWords.length); n >= 2; n--) {
+      final confirmedSuffix = confirmedWords.sublist(confirmedWords.length - n);
+      final interimPrefix = interimWords.sublist(0, n);
+
+      // Check if they match (with some tolerance for minor differences)
+      if (_wordsMatchFuzzy(confirmedSuffix, interimPrefix)) {
+        bestMatchWords = n;
+        break;
+      }
+    }
+
+    if (bestMatchWords > 0) {
+      // Remove the first bestMatchWords words from interim
+      final interimWordsList = interim.split(RegExp(r'\s+'));
+      if (bestMatchWords < interimWordsList.length) {
+        return interimWordsList.sublist(bestMatchWords).join(' ').trim();
+      } else {
+        return '';
+      }
+    }
+
+    // No significant overlap found
+    return interim;
+  }
+
+  /// Check if two word lists match with fuzzy tolerance
+  bool _wordsMatchFuzzy(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+
+    int matches = 0;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i] == b[i]) {
+        matches++;
+      } else if (_levenshteinDistance(a[i], b[i]) <= 2) {
+        // Allow small typos (Levenshtein distance <= 2)
+        matches++;
+      }
+    }
+
+    // Require at least 80% of words to match
+    return matches >= (a.length * 0.8).ceil();
+  }
+
+  /// Simple Levenshtein distance for fuzzy word matching
+  int _levenshteinDistance(String a, String b) {
+    if (a.isEmpty) return b.length;
+    if (b.isEmpty) return a.length;
+
+    List<int> prev = List.generate(b.length + 1, (i) => i);
+    List<int> curr = List.filled(b.length + 1, 0);
+
+    for (int i = 1; i <= a.length; i++) {
+      curr[0] = i;
+      for (int j = 1; j <= b.length; j++) {
+        int cost = a[i - 1] == b[j - 1] ? 0 : 1;
+        curr[j] = min(min(curr[j - 1] + 1, prev[j] + 1), prev[j - 1] + cost);
+      }
+      final temp = prev;
+      prev = curr;
+      curr = temp;
+    }
+
+    return prev[b.length];
+  }
+
+  /// Cut a matching prefix from interim, accounting for whitespace differences
+  String _cutMatchingPrefix(String interim, int confirmedLength) {
+    // Skip roughly confirmedLength characters, then find next word boundary
+    int pos = min(confirmedLength, interim.length);
+
+    // Find next space to get clean word boundary
+    while (pos < interim.length && interim[pos] != ' ') {
+      pos++;
+    }
+
+    // Skip any whitespace
+    while (pos < interim.length && interim[pos] == ' ') {
+      pos++;
+    }
+
+    return pos < interim.length ? interim.substring(pos).trim() : '';
   }
 
   /// Final transcription on stop - optimized to capture final words
@@ -929,7 +1024,30 @@ class StreamingVoiceService {
 
   /// Get complete transcript from streaming (confirmed segments)
   String getStreamingTranscript() {
-    return _confirmedSegments.join('\n');
+    if (_confirmedSegments.isEmpty) return '';
+
+    // Join segments with spaces and deduplicate any repeated phrases
+    final result = StringBuffer();
+
+    for (int i = 0; i < _confirmedSegments.length; i++) {
+      final segment = _confirmedSegments[i].trim();
+      if (segment.isEmpty) continue;
+
+      if (result.isEmpty) {
+        result.write(segment);
+      } else {
+        // Use fuzzy overlap removal
+        final currentText = result.toString();
+        final deduped = _removeOverlapFuzzy(currentText, segment);
+
+        if (deduped.isNotEmpty) {
+          result.write(' ');
+          result.write(deduped);
+        }
+      }
+    }
+
+    return result.toString().trim();
   }
 
   /// Dispose
