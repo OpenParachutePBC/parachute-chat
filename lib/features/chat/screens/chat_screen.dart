@@ -632,28 +632,33 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   color: isDark ? BrandColors.nightForest : BrandColors.forest,
                 ),
                 const SizedBox(width: Spacing.xs),
-                Text(
-                  segmentCount > 1
-                      ? 'Load earlier messages ($segmentCount segments)'
-                      : 'Load earlier messages',
-                  style: TextStyle(
-                    fontSize: TypographyTokens.bodySmall,
-                    fontWeight: FontWeight.w500,
-                    color: isDark ? BrandColors.nightForest : BrandColors.forest,
+                Flexible(
+                  child: Text(
+                    segmentCount > 1
+                        ? 'Load earlier messages ($segmentCount segments)'
+                        : 'Load earlier messages',
+                    style: TextStyle(
+                      fontSize: TypographyTokens.bodySmall,
+                      fontWeight: FontWeight.w500,
+                      color: isDark ? BrandColors.nightForest : BrandColors.forest,
+                    ),
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
                 if (nextSegment.preview != null) ...[
                   const SizedBox(width: Spacing.sm),
-                  Text(
-                    '• ${nextSegment.preview}',
-                    style: TextStyle(
-                      fontSize: TypographyTokens.bodySmall,
-                      color: isDark
-                          ? BrandColors.nightTextSecondary
-                          : BrandColors.driftwood,
+                  Flexible(
+                    child: Text(
+                      '• ${nextSegment.preview}',
+                      style: TextStyle(
+                        fontSize: TypographyTokens.bodySmall,
+                        color: isDark
+                            ? BrandColors.nightTextSecondary
+                            : BrandColors.driftwood,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
                   ),
                 ],
               ],

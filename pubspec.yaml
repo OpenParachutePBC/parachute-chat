@@ -29,6 +29,7 @@ dependencies:
 
   # Markdown
   flutter_markdown: ^0.7.0
+  markdown: ^7.2.2
 
   # Storage
   flutter_secure_storage: ^9.0.0

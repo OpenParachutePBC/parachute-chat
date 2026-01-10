@@ -208,6 +208,14 @@ class _CollapsibleThinkingSectionState extends State<CollapsibleThinkingSection>
         ? (widget.isDark ? BrandColors.error : BrandColors.error)
         : (widget.isDark ? BrandColors.nightTurquoise : BrandColors.turquoise);
 
+    // Special rendering for specific tools
+    if (toolCall.name.toLowerCase() == 'todowrite' && !isExpanded) {
+      return _buildTodoWriteCard(index, toolCall, chipColor, hasDetails);
+    }
+    if (toolCall.name.toLowerCase() == 'task' && !isExpanded) {
+      return _buildTaskAgentCard(index, toolCall, chipColor, hasDetails);
+    }
+
     return Container(
       margin: const EdgeInsets.only(bottom: Spacing.xs),
       child: Column(
@@ -384,6 +392,299 @@ class _CollapsibleThinkingSectionState extends State<CollapsibleThinkingSection>
                       ),
                     ),
                   ],
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Special card for TodoWrite tool - shows todos inline
+  Widget _buildTodoWriteCard(int index, ToolCall toolCall, Color chipColor, bool hasDetails) {
+    final todos = toolCall.input['todos'] as List<dynamic>? ?? [];
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: Spacing.xs),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header with expand button
+          GestureDetector(
+            onTap: hasDetails ? () => _toggleTool(index) : null,
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: Spacing.sm,
+                vertical: Spacing.xs,
+              ),
+              decoration: BoxDecoration(
+                color: chipColor.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(Radii.sm),
+                border: Border.all(
+                  color: chipColor.withValues(alpha: 0.3),
+                  width: 0.5,
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.checklist,
+                    size: 12,
+                    color: chipColor,
+                  ),
+                  const SizedBox(width: Spacing.xs),
+                  Text(
+                    'TodoWrite',
+                    style: TextStyle(
+                      color: widget.isDark ? BrandColors.nightTurquoise : BrandColors.turquoiseDeep,
+                      fontSize: TypographyTokens.labelSmall,
+                      fontFamily: 'monospace',
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(width: Spacing.xs),
+                  Text(
+                    '${todos.length} item${todos.length != 1 ? 's' : ''}',
+                    style: TextStyle(
+                      color: widget.isDark
+                          ? BrandColors.nightTextSecondary.withValues(alpha: 0.7)
+                          : BrandColors.driftwood.withValues(alpha: 0.7),
+                      fontSize: TypographyTokens.labelSmall,
+                    ),
+                  ),
+                  if (hasDetails) ...[
+                    const SizedBox(width: Spacing.xs),
+                    Icon(
+                      Icons.expand_more,
+                      size: 14,
+                      color: chipColor.withValues(alpha: 0.7),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          // Inline todo list (collapsed view)
+          if (todos.isNotEmpty)
+            Container(
+              margin: const EdgeInsets.only(top: Spacing.xs, left: Spacing.sm),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (var i = 0; i < todos.length && i < 5; i++)
+                    _buildTodoItem(todos[i] as Map<String, dynamic>),
+                  if (todos.length > 5)
+                    Padding(
+                      padding: const EdgeInsets.only(top: Spacing.xs),
+                      child: Text(
+                        '... and ${todos.length - 5} more',
+                        style: TextStyle(
+                          fontSize: TypographyTokens.labelSmall,
+                          color: widget.isDark
+                              ? BrandColors.nightTextSecondary
+                              : BrandColors.driftwood,
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTodoItem(Map<String, dynamic> todo) {
+    final status = todo['status'] as String? ?? 'pending';
+    final content = todo['content'] as String? ?? '';
+    final activeForm = todo['activeForm'] as String?;
+
+    final IconData icon;
+    final Color iconColor;
+    final bool isActive = status == 'in_progress';
+
+    switch (status) {
+      case 'completed':
+        icon = Icons.check_circle;
+        iconColor = widget.isDark ? BrandColors.nightForest : BrandColors.forest;
+        break;
+      case 'in_progress':
+        icon = Icons.play_circle;
+        iconColor = widget.isDark ? BrandColors.nightTurquoise : BrandColors.turquoise;
+        break;
+      default:
+        icon = Icons.circle_outlined;
+        iconColor = widget.isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood;
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 14, color: iconColor),
+          const SizedBox(width: Spacing.xs),
+          Expanded(
+            child: Text(
+              isActive ? (activeForm ?? content) : content,
+              style: TextStyle(
+                fontSize: TypographyTokens.labelSmall,
+                color: status == 'completed'
+                    ? (widget.isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood)
+                    : (widget.isDark ? BrandColors.nightText : BrandColors.charcoal),
+                decoration: status == 'completed' ? TextDecoration.lineThrough : null,
+                fontWeight: isActive ? FontWeight.w500 : FontWeight.normal,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Special card for Task tool (agent) - shows description and status
+  Widget _buildTaskAgentCard(int index, ToolCall toolCall, Color chipColor, bool hasDetails) {
+    final description = toolCall.input['description'] as String? ?? '';
+    final subagentType = toolCall.input['subagent_type'] as String? ?? 'general';
+    final hasResult = toolCall.result != null;
+
+    // Determine agent icon based on type
+    IconData agentIcon;
+    switch (subagentType.toLowerCase()) {
+      case 'bash':
+        agentIcon = Icons.terminal;
+        break;
+      case 'explore':
+        agentIcon = Icons.explore;
+        break;
+      case 'plan':
+        agentIcon = Icons.architecture;
+        break;
+      case 'code-reviewer':
+        agentIcon = Icons.rate_review;
+        break;
+      case 'creative-director':
+        agentIcon = Icons.palette;
+        break;
+      default:
+        agentIcon = Icons.smart_toy;
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: Spacing.xs),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header with expand button
+          GestureDetector(
+            onTap: hasDetails ? () => _toggleTool(index) : null,
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: Spacing.sm,
+                vertical: Spacing.xs,
+              ),
+              decoration: BoxDecoration(
+                color: chipColor.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(Radii.sm),
+                border: Border.all(
+                  color: chipColor.withValues(alpha: 0.3),
+                  width: 0.5,
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    agentIcon,
+                    size: 12,
+                    color: chipColor,
+                  ),
+                  const SizedBox(width: Spacing.xs),
+                  Text(
+                    'Task',
+                    style: TextStyle(
+                      color: widget.isDark ? BrandColors.nightTurquoise : BrandColors.turquoiseDeep,
+                      fontSize: TypographyTokens.labelSmall,
+                      fontFamily: 'monospace',
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(width: Spacing.xs),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: widget.isDark
+                          ? BrandColors.nightSurface
+                          : BrandColors.cream,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      subagentType,
+                      style: TextStyle(
+                        fontSize: TypographyTokens.labelSmall - 1,
+                        color: widget.isDark
+                            ? BrandColors.nightTextSecondary
+                            : BrandColors.driftwood,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                  ),
+                  if (hasResult && !toolCall.isError) ...[
+                    const SizedBox(width: Spacing.xs),
+                    Icon(
+                      Icons.check_circle_outline,
+                      size: 12,
+                      color: widget.isDark ? BrandColors.nightForest : BrandColors.forest,
+                    ),
+                  ],
+                  if (hasDetails) ...[
+                    const SizedBox(width: Spacing.xs),
+                    Icon(
+                      Icons.expand_more,
+                      size: 14,
+                      color: chipColor.withValues(alpha: 0.7),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          // Task description preview
+          if (description.isNotEmpty)
+            Container(
+              margin: const EdgeInsets.only(top: Spacing.xs, left: Spacing.sm),
+              padding: const EdgeInsets.all(Spacing.xs),
+              decoration: BoxDecoration(
+                color: widget.isDark
+                    ? BrandColors.nightSurface.withValues(alpha: 0.3)
+                    : BrandColors.cream.withValues(alpha: 0.5),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.short_text,
+                    size: 12,
+                    color: widget.isDark
+                        ? BrandColors.nightTextSecondary
+                        : BrandColors.driftwood,
+                  ),
+                  const SizedBox(width: Spacing.xs),
+                  Expanded(
+                    child: Text(
+                      description,
+                      style: TextStyle(
+                        fontSize: TypographyTokens.labelSmall,
+                        color: widget.isDark
+                            ? BrandColors.nightText
+                            : BrandColors.charcoal,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
                 ],
               ),
             ),

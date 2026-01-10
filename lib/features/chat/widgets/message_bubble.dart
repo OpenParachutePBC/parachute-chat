@@ -12,6 +12,7 @@ import '../models/chat_message.dart';
 import 'inline_audio_player.dart';
 import 'collapsible_thinking_section.dart';
 import 'collapsible_compact_summary.dart';
+import 'collapsible_code_block.dart';
 
 /// Intent for copying message text
 class CopyMessageIntent extends Intent {
@@ -159,6 +160,10 @@ class MessageBubble extends ConsumerWidget {
       child: MarkdownBody(
               data: text,
               selectable: false,
+              // Custom builder for collapsible large code blocks
+              builders: {
+                'pre': CollapsibleCodeBlockBuilder(isDark: isDark),
+              },
               // ignore: deprecated_member_use
               imageBuilder: (uri, title, alt) =>
                   _buildImage(uri, title, alt, vaultPath, isDark),
@@ -180,7 +185,9 @@ class MessageBubble extends ConsumerWidget {
                       : (isDark ? BrandColors.nightTurquoise : BrandColors.turquoise),
                 ),
                 code: TextStyle(
-                  color: textColor,
+                  // Code blocks always have light backgrounds, so use dark text
+                  // regardless of user/assistant message type
+                  color: isDark ? BrandColors.nightText : BrandColors.charcoal,
                   backgroundColor: isDark
                       ? BrandColors.nightSurface
                       : BrandColors.cream,
