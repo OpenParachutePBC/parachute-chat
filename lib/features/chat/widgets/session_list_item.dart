@@ -4,17 +4,23 @@ import '../models/chat_session.dart';
 
 /// List item for displaying a chat session
 ///
-/// Shows session title, agent name, timestamp, and swipe-to-delete with confirmation.
+/// Shows session title, agent name, timestamp, and swipe actions:
+/// - Swipe left (start to end): Archive/Unarchive
+/// - Swipe right (end to start): Delete with confirmation
 class SessionListItem extends StatelessWidget {
   final ChatSession session;
   final VoidCallback onTap;
   final Future<void> Function() onDelete;
+  final Future<void> Function()? onArchive;
+  final Future<void> Function()? onUnarchive;
 
   const SessionListItem({
     super.key,
     required this.session,
     required this.onTap,
     required this.onDelete,
+    this.onArchive,
+    this.onUnarchive,
   });
 
   Future<bool> _confirmDelete(BuildContext context) async {
@@ -48,19 +54,52 @@ class SessionListItem extends StatelessWidget {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
+    // Determine swipe actions based on archive state
+    final canArchive = !session.archived && onArchive != null;
+    final canUnarchive = session.archived && onUnarchive != null;
+    final hasLeftAction = canArchive || canUnarchive;
+
     return Dismissible(
       key: Key(session.id),
-      direction: DismissDirection.endToStart,
-      confirmDismiss: (_) async {
-        // Show confirmation dialog first
-        final confirmed = await _confirmDelete(context);
-        if (!confirmed) return false;
-
-        // Perform the deletion
-        await onDelete();
-        return true;
+      direction: hasLeftAction
+          ? DismissDirection.horizontal
+          : DismissDirection.endToStart,
+      confirmDismiss: (direction) async {
+        if (direction == DismissDirection.startToEnd) {
+          // Archive or unarchive (no confirmation needed)
+          if (canArchive) {
+            await onArchive!();
+          } else if (canUnarchive) {
+            await onUnarchive!();
+          }
+          return false; // We handle the action in callbacks
+        } else {
+          // Delete - show confirmation dialog
+          final confirmed = await _confirmDelete(context);
+          if (!confirmed) return false;
+          await onDelete();
+          return true;
+        }
       },
-      background: Container(
+      // Left swipe background (archive/unarchive)
+      background: hasLeftAction
+          ? Container(
+              alignment: Alignment.centerLeft,
+              padding: const EdgeInsets.only(left: Spacing.lg),
+              decoration: BoxDecoration(
+                color: canUnarchive
+                    ? (isDark ? BrandColors.nightForest : BrandColors.forest)
+                    : (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood),
+                borderRadius: Radii.card,
+              ),
+              child: Icon(
+                canUnarchive ? Icons.unarchive : Icons.archive,
+                color: Colors.white,
+              ),
+            )
+          : null,
+      // Right swipe background (delete)
+      secondaryBackground: Container(
         alignment: Alignment.centerRight,
         padding: const EdgeInsets.only(right: Spacing.lg),
         decoration: BoxDecoration(
@@ -102,17 +141,49 @@ class SessionListItem extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        session.displayTitle,
-                        style: TextStyle(
-                          fontSize: TypographyTokens.bodyMedium,
-                          fontWeight: FontWeight.w500,
-                          color: isDark
-                              ? BrandColors.nightText
-                              : BrandColors.charcoal,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              session.displayTitle,
+                              style: TextStyle(
+                                fontSize: TypographyTokens.bodyMedium,
+                                fontWeight: FontWeight.w500,
+                                color: isDark
+                                    ? BrandColors.nightText
+                                    : BrandColors.charcoal,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          // Archived badge
+                          if (session.archived)
+                            Container(
+                              margin: const EdgeInsets.only(left: Spacing.xs),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: Spacing.xs,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: (isDark
+                                        ? BrandColors.nightTextSecondary
+                                        : BrandColors.driftwood)
+                                    .withValues(alpha: 0.2),
+                                borderRadius: Radii.badge,
+                              ),
+                              child: Text(
+                                'Archived',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w500,
+                                  color: isDark
+                                      ? BrandColors.nightTextSecondary
+                                      : BrandColors.driftwood,
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                       const SizedBox(height: Spacing.xxs),
                       Row(

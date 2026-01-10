@@ -14,6 +14,7 @@ enum ChatFilter {
   all,
   active,
   imported,
+  archived,
 }
 
 /// Chat Hub - Main entry point for AI conversations
@@ -138,9 +139,10 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
     // Count sessions in each category
     final activeCount = allSessions.where((s) => !s.archived && !s.isImported).length;
     final importedCount = allSessions.where((s) => s.isImported).length;
+    final archivedCount = allSessions.where((s) => s.archived).length;
 
-    // Don't show filters if there are no imported sessions
-    if (importedCount == 0) {
+    // Don't show filters if there are no imported or archived sessions
+    if (importedCount == 0 && archivedCount == 0) {
       return const SizedBox.shrink();
     }
 
@@ -149,32 +151,47 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
         horizontal: Spacing.md,
         vertical: Spacing.sm,
       ),
-      child: Row(
-        children: [
-          _buildFilterChip(
-            label: 'Active',
-            count: activeCount,
-            isSelected: _currentFilter == ChatFilter.active,
-            onTap: () => setState(() => _currentFilter = ChatFilter.active),
-            isDark: isDark,
-          ),
-          const SizedBox(width: Spacing.sm),
-          _buildFilterChip(
-            label: 'Imported',
-            count: importedCount,
-            isSelected: _currentFilter == ChatFilter.imported,
-            onTap: () => setState(() => _currentFilter = ChatFilter.imported),
-            isDark: isDark,
-          ),
-          const SizedBox(width: Spacing.sm),
-          _buildFilterChip(
-            label: 'All',
-            count: allSessions.length,
-            isSelected: _currentFilter == ChatFilter.all,
-            onTap: () => setState(() => _currentFilter = ChatFilter.all),
-            isDark: isDark,
-          ),
-        ],
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            _buildFilterChip(
+              label: 'Active',
+              count: activeCount,
+              isSelected: _currentFilter == ChatFilter.active,
+              onTap: () => setState(() => _currentFilter = ChatFilter.active),
+              isDark: isDark,
+            ),
+            if (importedCount > 0) ...[
+              const SizedBox(width: Spacing.sm),
+              _buildFilterChip(
+                label: 'Imported',
+                count: importedCount,
+                isSelected: _currentFilter == ChatFilter.imported,
+                onTap: () => setState(() => _currentFilter = ChatFilter.imported),
+                isDark: isDark,
+              ),
+            ],
+            if (archivedCount > 0) ...[
+              const SizedBox(width: Spacing.sm),
+              _buildFilterChip(
+                label: 'Archived',
+                count: archivedCount,
+                isSelected: _currentFilter == ChatFilter.archived,
+                onTap: () => setState(() => _currentFilter = ChatFilter.archived),
+                isDark: isDark,
+              ),
+            ],
+            const SizedBox(width: Spacing.sm),
+            _buildFilterChip(
+              label: 'All',
+              count: allSessions.length,
+              isSelected: _currentFilter == ChatFilter.all,
+              onTap: () => setState(() => _currentFilter = ChatFilter.all),
+              isDark: isDark,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -271,6 +288,9 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
       case ChatFilter.imported:
         filteredSessions = sessions.where((s) => s.isImported).toList();
         break;
+      case ChatFilter.archived:
+        filteredSessions = sessions.where((s) => s.archived).toList();
+        break;
       case ChatFilter.all:
         filteredSessions = sessions.toList();
         break;
@@ -288,7 +308,9 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
               constraints: BoxConstraints(minHeight: constraints.maxHeight),
               child: _currentFilter == ChatFilter.imported
                   ? _buildEmptyImportedState(isDark)
-                  : _buildEmptyState(context, isDark),
+                  : _currentFilter == ChatFilter.archived
+                      ? _buildEmptyArchivedState(isDark)
+                      : _buildEmptyState(context, isDark),
             ),
           ),
         ),
@@ -308,6 +330,52 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
           final group = grouped[index];
           return _buildDateGroup(context, group, isDark);
         },
+      ),
+    );
+  }
+
+  Widget _buildEmptyArchivedState(bool isDark) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(Spacing.xl),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(Spacing.xl),
+              decoration: BoxDecoration(
+                color: isDark
+                    ? BrandColors.nightSurfaceElevated
+                    : BrandColors.stone.withValues(alpha: 0.3),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.archive_outlined,
+                size: 48,
+                color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+              ),
+            ),
+            const SizedBox(height: Spacing.xl),
+            Text(
+              'No archived chats',
+              style: TextStyle(
+                fontSize: TypographyTokens.headlineSmall,
+                fontWeight: FontWeight.w600,
+                color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+              ),
+            ),
+            const SizedBox(height: Spacing.sm),
+            Text(
+              'Swipe left on a chat to archive it.\nArchived chats are hidden but not deleted.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: TypographyTokens.bodyMedium,
+                color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                height: TypographyTokens.lineHeightRelaxed,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -389,6 +457,8 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
                 session: session,
                 onTap: () => _handleSessionTap(context, session),
                 onDelete: () => _handleSessionDelete(session),
+                onArchive: () => _handleSessionArchive(session),
+                onUnarchive: () => _handleSessionUnarchive(session),
               ),
             )),
       ],
@@ -666,6 +736,14 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
 
   Future<void> _handleSessionDelete(ChatSession session) async {
     await ref.read(deleteSessionProvider)(session.id);
+  }
+
+  Future<void> _handleSessionArchive(ChatSession session) async {
+    await ref.read(archiveSessionProvider)(session.id);
+  }
+
+  Future<void> _handleSessionUnarchive(ChatSession session) async {
+    await ref.read(unarchiveSessionProvider)(session.id);
   }
 
   // ============================================================

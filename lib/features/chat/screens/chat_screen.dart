@@ -417,6 +417,50 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 ),
                 tooltip: 'Curator activity',
               ),
+            // More actions menu (archive, delete)
+            if (chatState.sessionId != null)
+              PopupMenuButton<String>(
+                icon: Icon(
+                  Icons.more_vert,
+                  size: 20,
+                  color: isDark ? BrandColors.nightTextSecondary : BrandColors.charcoal,
+                ),
+                tooltip: 'More actions',
+                onSelected: (value) => _handleMenuAction(value, chatState.sessionId!),
+                itemBuilder: (context) => [
+                  PopupMenuItem(
+                    value: 'archive',
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.archive_outlined,
+                          size: 20,
+                          color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                        ),
+                        const SizedBox(width: Spacing.sm),
+                        const Text('Archive'),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'delete',
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.delete_outline,
+                          size: 20,
+                          color: BrandColors.error,
+                        ),
+                        const SizedBox(width: Spacing.sm),
+                        Text(
+                          'Delete',
+                          style: TextStyle(color: BrandColors.error),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             const SizedBox(width: Spacing.xs),
           ],
       ),
@@ -1021,6 +1065,52 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     if (chatState.sessionId != null) {
       CuratorSessionViewerSheet.show(context, chatState.sessionId!);
     }
+  }
+
+  /// Handle menu actions (archive, delete)
+  Future<void> _handleMenuAction(String action, String sessionId) async {
+    switch (action) {
+      case 'archive':
+        await ref.read(archiveSessionProvider)(sessionId);
+        if (mounted) {
+          Navigator.of(context).pop(); // Go back to hub
+        }
+        break;
+      case 'delete':
+        final confirmed = await _confirmDeleteSession();
+        if (confirmed && mounted) {
+          await ref.read(deleteSessionProvider)(sessionId);
+          Navigator.of(context).pop(); // Go back to hub
+        }
+        break;
+    }
+  }
+
+  /// Show delete confirmation dialog
+  Future<bool> _confirmDeleteSession() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete conversation?'),
+        content: const Text(
+          'This will permanently delete this conversation.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: TextButton.styleFrom(
+              foregroundColor: BrandColors.error,
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
   }
 
   /// Build the user question card when Claude asks a question
