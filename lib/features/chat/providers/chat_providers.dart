@@ -1121,7 +1121,8 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
 
     // For new sessions, use 'pending' as a placeholder until server assigns real ID
     // For existing sessions, use the real ID
-    final displaySessionId = existingSessionId ?? 'pending';
+    // Note: This is mutable because it gets updated when the server assigns the real session ID
+    var displaySessionId = existingSessionId ?? 'pending';
 
     // Add user message immediately
     final userMessage = ChatMessage.user(
@@ -1251,6 +1252,9 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
                 state = state.copyWith(sessionId: actualSessionId);
                 // Update the active stream ID to match the real session ID
                 _activeStreamSessionId = actualSessionId;
+                // CRITICAL: Also update displaySessionId so the background stream check works correctly
+                // Without this, subsequent events would be treated as background stream events and skipped
+                displaySessionId = actualSessionId;
               }
               // Refresh sessions list now that we have a valid session ID
               // (The session should now exist in the server's database)
