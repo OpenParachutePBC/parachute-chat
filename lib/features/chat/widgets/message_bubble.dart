@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -304,19 +305,23 @@ class MessageBubble extends ConsumerWidget {
         return Padding(
           padding: const EdgeInsets.symmetric(vertical: Spacing.sm),
           child: GestureDetector(
+            onTap: () => _showImagePreview(context, file, isDark),
             onSecondaryTapUp: (details) => _showImageContextMenu(
               context, details.globalPosition, file, isDark,
             ),
             onLongPressStart: (details) => _showImageContextMenu(
               context, details.globalPosition, file, isDark,
             ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(Radii.sm),
-              child: Image.file(
-                file,
-                fit: BoxFit.contain,
-                errorBuilder: (context, error, stack) =>
-                    _buildImagePlaceholder('Failed to load image', isDark),
+            child: MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(Radii.sm),
+                child: Image.file(
+                  file,
+                  fit: BoxFit.contain,
+                  errorBuilder: (context, error, stack) =>
+                      _buildImagePlaceholder('Failed to load image', isDark),
+                ),
               ),
             ),
           ),
@@ -327,47 +332,104 @@ class MessageBubble extends ConsumerWidget {
 
   /// Build a remote image widget from URL
   Widget _buildRemoteImage(String url, String? alt, bool isDark) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: Spacing.sm),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(Radii.sm),
-        child: Image.network(
-          url,
-          fit: BoxFit.contain,
-          loadingBuilder: (context, child, loadingProgress) {
-            if (loadingProgress == null) return child;
-            return Container(
-              padding: const EdgeInsets.all(Spacing.lg),
-              decoration: BoxDecoration(
-                color: isDark ? BrandColors.nightSurface : BrandColors.cream,
-                borderRadius: BorderRadius.circular(Radii.sm),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  CircularProgressIndicator(
-                    value: loadingProgress.expectedTotalBytes != null
-                        ? loadingProgress.cumulativeBytesLoaded /
-                            loadingProgress.expectedTotalBytes!
-                        : null,
-                    strokeWidth: 2,
-                    color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
-                  ),
-                  const SizedBox(height: Spacing.sm),
-                  Text(
-                    'Loading image...',
-                    style: TextStyle(
-                      fontSize: TypographyTokens.labelSmall,
-                      color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+    return Builder(
+      builder: (context) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: Spacing.sm),
+        child: GestureDetector(
+          onTap: () => _showRemoteImagePreview(context, url, isDark),
+          child: MouseRegion(
+            cursor: SystemMouseCursors.click,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(Radii.sm),
+              child: Image.network(
+                url,
+                fit: BoxFit.contain,
+                loadingBuilder: (context, child, loadingProgress) {
+                  if (loadingProgress == null) return child;
+                  return Container(
+                    padding: const EdgeInsets.all(Spacing.lg),
+                    decoration: BoxDecoration(
+                      color: isDark ? BrandColors.nightSurface : BrandColors.cream,
+                      borderRadius: BorderRadius.circular(Radii.sm),
                     ),
-                  ),
-                ],
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        CircularProgressIndicator(
+                          value: loadingProgress.expectedTotalBytes != null
+                              ? loadingProgress.cumulativeBytesLoaded /
+                                  loadingProgress.expectedTotalBytes!
+                              : null,
+                          strokeWidth: 2,
+                          color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
+                        ),
+                        const SizedBox(height: Spacing.sm),
+                        Text(
+                          'Loading image...',
+                          style: TextStyle(
+                            fontSize: TypographyTokens.labelSmall,
+                            color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+                errorBuilder: (context, error, stack) =>
+                    _buildImagePlaceholder(alt ?? 'Failed to load remote image', isDark),
               ),
-            );
-          },
-          errorBuilder: (context, error, stack) =>
-              _buildImagePlaceholder(alt ?? 'Failed to load remote image', isDark),
+            ),
+          ),
         ),
+      ),
+    );
+  }
+
+  /// Show fullscreen preview for remote image with download option
+  void _showRemoteImagePreview(BuildContext context, String url, bool isDark) {
+    Navigator.of(context).push(
+      PageRouteBuilder(
+        opaque: false,
+        barrierDismissible: true,
+        barrierColor: Colors.black87,
+        pageBuilder: (context, animation, secondaryAnimation) {
+          return _RemoteImagePreviewOverlay(
+            url: url,
+            isDark: isDark,
+          );
+        },
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          return FadeTransition(
+            opacity: animation,
+            child: child,
+          );
+        },
+      ),
+    );
+  }
+
+  /// Show fullscreen image preview with download option
+  void _showImagePreview(BuildContext context, File file, bool isDark) {
+    Navigator.of(context).push(
+      PageRouteBuilder(
+        opaque: false,
+        barrierDismissible: true,
+        barrierColor: Colors.black87,
+        pageBuilder: (context, animation, secondaryAnimation) {
+          return _ImagePreviewOverlay(
+            file: file,
+            isDark: isDark,
+            onSave: () => _saveImageAs(context, file),
+            onReveal: () => _revealInFinder(file),
+            onCopy: () => _copyImageToClipboard(context, file),
+          );
+        },
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          return FadeTransition(
+            opacity: animation,
+            child: child,
+          );
+        },
       ),
     );
   }
@@ -952,6 +1014,435 @@ class _CopyButtonState extends State<_CopyButton> {
                 color: _copied
                     ? (widget.isDark ? BrandColors.nightTurquoise : BrandColors.turquoise)
                     : iconColor,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Fullscreen image preview overlay with download and actions
+class _ImagePreviewOverlay extends StatelessWidget {
+  final File file;
+  final bool isDark;
+  final VoidCallback onSave;
+  final VoidCallback onReveal;
+  final VoidCallback onCopy;
+
+  const _ImagePreviewOverlay({
+    required this.file,
+    required this.isDark,
+    required this.onSave,
+    required this.onReveal,
+    required this.onCopy,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final fileName = file.path.split('/').last;
+
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: GestureDetector(
+        onTap: () => Navigator.of(context).pop(),
+        child: Stack(
+          children: [
+            // Image centered
+            Center(
+              child: GestureDetector(
+                onTap: () {}, // Prevent closing when tapping image
+                child: InteractiveViewer(
+                  minScale: 0.5,
+                  maxScale: 4.0,
+                  child: Image.file(
+                    file,
+                    fit: BoxFit.contain,
+                  ),
+                ),
+              ),
+            ),
+            // Top bar with filename and close
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: Container(
+                padding: EdgeInsets.only(
+                  top: MediaQuery.of(context).padding.top + Spacing.sm,
+                  left: Spacing.md,
+                  right: Spacing.md,
+                  bottom: Spacing.sm,
+                ),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.black54,
+                      Colors.transparent,
+                    ],
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        fileName,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: TypographyTokens.bodyMedium,
+                          fontWeight: FontWeight.w500,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: const Icon(Icons.close, color: Colors.white),
+                      tooltip: 'Close',
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            // Bottom action bar
+            Positioned(
+              bottom: 0,
+              left: 0,
+              right: 0,
+              child: Container(
+                padding: EdgeInsets.only(
+                  bottom: MediaQuery.of(context).padding.bottom + Spacing.md,
+                  top: Spacing.md,
+                ),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.bottomCenter,
+                    end: Alignment.topCenter,
+                    colors: [
+                      Colors.black54,
+                      Colors.transparent,
+                    ],
+                  ),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    _ActionButton(
+                      icon: Icons.save_alt,
+                      label: 'Download',
+                      onTap: () {
+                        Navigator.of(context).pop();
+                        onSave();
+                      },
+                    ),
+                    const SizedBox(width: Spacing.xl),
+                    _ActionButton(
+                      icon: Icons.copy,
+                      label: 'Copy Path',
+                      onTap: () {
+                        Navigator.of(context).pop();
+                        onCopy();
+                      },
+                    ),
+                    const SizedBox(width: Spacing.xl),
+                    _ActionButton(
+                      icon: Icons.folder_open,
+                      label: 'Show in Folder',
+                      onTap: () {
+                        Navigator.of(context).pop();
+                        onReveal();
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Action button for image preview overlay
+class _ActionButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  const _ActionButton({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(Spacing.sm),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.2),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              icon,
+              color: Colors.white,
+              size: 24,
+            ),
+          ),
+          const SizedBox(height: Spacing.xs),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: TypographyTokens.labelSmall,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Fullscreen remote image preview overlay with download option
+class _RemoteImagePreviewOverlay extends StatefulWidget {
+  final String url;
+  final bool isDark;
+
+  const _RemoteImagePreviewOverlay({
+    required this.url,
+    required this.isDark,
+  });
+
+  @override
+  State<_RemoteImagePreviewOverlay> createState() => _RemoteImagePreviewOverlayState();
+}
+
+class _RemoteImagePreviewOverlayState extends State<_RemoteImagePreviewOverlay> {
+  bool _isDownloading = false;
+
+  String get _fileName {
+    final uri = Uri.tryParse(widget.url);
+    if (uri != null && uri.pathSegments.isNotEmpty) {
+      return uri.pathSegments.last;
+    }
+    return 'image';
+  }
+
+  Future<void> _downloadImage() async {
+    setState(() => _isDownloading = true);
+
+    try {
+      // Get file extension from URL or default to .png
+      var fileName = _fileName;
+      if (!fileName.contains('.')) {
+        fileName = '$fileName.png';
+      }
+
+      final result = await FilePicker.platform.saveFile(
+        dialogTitle: 'Save image as',
+        fileName: fileName,
+        type: FileType.image,
+      );
+
+      if (result != null) {
+        // Download the image
+        final httpClient = HttpClient();
+        final request = await httpClient.getUrl(Uri.parse(widget.url));
+        final response = await request.close();
+        final bytes = await consolidateHttpClientResponseBytes(response);
+
+        // Write to file
+        final file = File(result);
+        await file.writeAsBytes(bytes);
+
+        if (mounted) {
+          Navigator.of(context).pop();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Image saved to ${result.split('/').last}'),
+              duration: const Duration(seconds: 2),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to download: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isDownloading = false);
+      }
+    }
+  }
+
+  Future<void> _copyUrlToClipboard() async {
+    await Clipboard.setData(ClipboardData(text: widget.url));
+    if (mounted) {
+      Navigator.of(context).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Image URL copied to clipboard'),
+          duration: Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  Future<void> _openInBrowser() async {
+    final uri = Uri.tryParse(widget.url);
+    if (uri != null) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: GestureDetector(
+        onTap: () => Navigator.of(context).pop(),
+        child: Stack(
+          children: [
+            // Image centered
+            Center(
+              child: GestureDetector(
+                onTap: () {}, // Prevent closing when tapping image
+                child: InteractiveViewer(
+                  minScale: 0.5,
+                  maxScale: 4.0,
+                  child: Image.network(
+                    widget.url,
+                    fit: BoxFit.contain,
+                    loadingBuilder: (context, child, loadingProgress) {
+                      if (loadingProgress == null) return child;
+                      return Center(
+                        child: CircularProgressIndicator(
+                          value: loadingProgress.expectedTotalBytes != null
+                              ? loadingProgress.cumulativeBytesLoaded /
+                                  loadingProgress.expectedTotalBytes!
+                              : null,
+                          color: Colors.white,
+                        ),
+                      );
+                    },
+                    errorBuilder: (context, error, stack) => Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.error_outline, color: Colors.white, size: 48),
+                        const SizedBox(height: Spacing.sm),
+                        const Text(
+                          'Failed to load image',
+                          style: TextStyle(color: Colors.white),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            // Top bar with filename and close
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: Container(
+                padding: EdgeInsets.only(
+                  top: MediaQuery.of(context).padding.top + Spacing.sm,
+                  left: Spacing.md,
+                  right: Spacing.md,
+                  bottom: Spacing.sm,
+                ),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.black54,
+                      Colors.transparent,
+                    ],
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _fileName,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: TypographyTokens.bodyMedium,
+                          fontWeight: FontWeight.w500,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: const Icon(Icons.close, color: Colors.white),
+                      tooltip: 'Close',
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            // Bottom action bar
+            Positioned(
+              bottom: 0,
+              left: 0,
+              right: 0,
+              child: Container(
+                padding: EdgeInsets.only(
+                  bottom: MediaQuery.of(context).padding.bottom + Spacing.md,
+                  top: Spacing.md,
+                ),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.bottomCenter,
+                    end: Alignment.topCenter,
+                    colors: [
+                      Colors.black54,
+                      Colors.transparent,
+                    ],
+                  ),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    _ActionButton(
+                      icon: _isDownloading ? Icons.hourglass_empty : Icons.save_alt,
+                      label: _isDownloading ? 'Saving...' : 'Download',
+                      onTap: _isDownloading ? () {} : _downloadImage,
+                    ),
+                    const SizedBox(width: Spacing.xl),
+                    _ActionButton(
+                      icon: Icons.copy,
+                      label: 'Copy URL',
+                      onTap: _copyUrlToClipboard,
+                    ),
+                    const SizedBox(width: Spacing.xl),
+                    _ActionButton(
+                      icon: Icons.open_in_browser,
+                      label: 'Open in Browser',
+                      onTap: _openInBrowser,
+                    ),
+                  ],
+                ),
               ),
             ),
           ],
