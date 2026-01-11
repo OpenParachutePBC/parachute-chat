@@ -1,9 +1,9 @@
 /// Information about a module's system prompt (from /api/modules/:mod/prompt)
 class ModulePromptInfo {
-  /// The current prompt content (from AGENTS.md or default)
+  /// The current prompt content (from CLAUDE.md or default)
   final String content;
 
-  /// Whether AGENTS.md exists for this module
+  /// Whether CLAUDE.md exists for this module
   final bool exists;
 
   /// The built-in default prompt
@@ -30,10 +30,10 @@ class DefaultPromptInfo {
   /// The actual prompt content
   final String content;
 
-  /// Whether this default is currently active (no AGENTS.md override)
+  /// Whether this default is currently active (no CLAUDE.md override)
   final bool isActive;
 
-  /// Name of the override file if present (e.g., "AGENTS.md")
+  /// Name of the override file if present (e.g., "CLAUDE.md")
   final String? overrideFile;
 
   /// Description of what this prompt is
@@ -56,10 +56,10 @@ class DefaultPromptInfo {
   }
 }
 
-/// Information about the user's AGENTS.md file
+/// Information about the user's CLAUDE.md file
 /// @deprecated Use ModulePromptInfo instead
-class AgentsMdInfo {
-  /// The content of AGENTS.md (null if doesn't exist)
+class ClaudeMdInfo {
+  /// The content of CLAUDE.md (null if doesn't exist)
   final String? content;
 
   /// Path to the file
@@ -68,14 +68,14 @@ class AgentsMdInfo {
   /// Whether the file exists
   final bool exists;
 
-  const AgentsMdInfo({
+  const ClaudeMdInfo({
     this.content,
     this.path,
     required this.exists,
   });
 
-  factory AgentsMdInfo.fromJson(Map<String, dynamic> json) {
-    return AgentsMdInfo(
+  factory ClaudeMdInfo.fromJson(Map<String, dynamic> json) {
+    return ClaudeMdInfo(
       content: json['content'] as String?,
       path: json['path'] as String?,
       exists: json['content'] != null,

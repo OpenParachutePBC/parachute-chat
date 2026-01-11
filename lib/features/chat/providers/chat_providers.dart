@@ -1072,7 +1072,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
   /// Send a message and handle streaming response
   ///
   /// [systemPrompt] - Custom system prompt for this session
-  /// If not provided, the server will use the module's AGENTS.md or default prompt.
+  /// If not provided, the server will use the module's CLAUDE.md or default prompt.
   ///
   /// [priorConversation] - For continued conversations, prior messages
   /// formatted as text. Goes into system prompt, not shown in chat.
@@ -1836,12 +1836,12 @@ final selectedContextsProvider = StateProvider<List<String>>((ref) {
 });
 
 // ============================================================
-// Context Folders (AGENTS.md hierarchy)
+// Context Folders (CLAUDE.md hierarchy)
 // ============================================================
 
 /// Provider for available context folders
 ///
-/// Fetches folders with AGENTS.md or CLAUDE.md files that can be
+/// Fetches folders with CLAUDE.md files that can be
 /// selected as context for a session.
 final contextFoldersProvider = FutureProvider<List<ContextFolder>>((ref) async {
   final service = ref.watch(chatServiceProvider);
@@ -1855,15 +1855,15 @@ final contextFoldersProvider = FutureProvider<List<ContextFolder>>((ref) async {
 
 /// Provider for selected context folder paths for new chats
 ///
-/// Default: [""] to include root AGENTS.md (Parachute context)
+/// Default: [""] to include root CLAUDE.md (Parachute context)
 /// Paths are folder paths relative to vault (e.g., "Projects/parachute")
 final selectedContextFoldersProvider = StateProvider<List<String>>((ref) {
-  return [""]; // Default to root AGENTS.md (Parachute context)
+  return [""]; // Default to root CLAUDE.md (Parachute context)
 });
 
 /// Provider to get context chain for selected folders
 ///
-/// Shows all AGENTS.md files that will be loaded, including parent chain.
+/// Shows all CLAUDE.md files that will be loaded, including parent chain.
 /// Pass folder paths as comma-separated string (e.g., ",Projects/parachute")
 /// Empty string "" represents root folder.
 final contextChainProvider =

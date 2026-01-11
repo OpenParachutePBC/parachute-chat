@@ -56,7 +56,7 @@ final vaultStateProvider = FutureProvider<VaultState>((ref) async {
 });
 
 /// Provider to check if vault needs capture phase setup
-/// (Different from vaultNeedsSetupProvider in context_providers which checks AGENTS.md)
+/// (Different from vaultNeedsSetupProvider in context_providers which checks CLAUDE.md)
 final vaultCaptureNeedsSetupProvider = FutureProvider<bool>((ref) async {
   final state = await ref.watch(vaultStateProvider.future);
   return state.needsSetup;

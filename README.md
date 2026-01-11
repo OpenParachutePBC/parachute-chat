@@ -43,8 +43,8 @@ flutter run -d macos
 ### Vault Integration
 - Search across sessions and notes
 - Personal context via `contexts/` files
-- Custom agents via `.agents/` definitions
-- System prompt override via `AGENTS.md`
+- Custom agents via `.claude/agents/` definitions
+- System prompt override via `CLAUDE.md`
 
 ### Image Generation
 - **mflux**: Local FLUX models on Apple Silicon
@@ -62,8 +62,10 @@ Chat stores sessions in your vault:
 │   ├── sessions/           # Chat history (markdown)
 │   └── contexts/           # Personal context files
 ├── assets/                 # Generated images
-├── .agents/                # Custom agent definitions
-└── AGENTS.md               # System prompt override
+├── .claude/                # Skills and agents
+│   ├── skills/             # Custom skills
+│   └── agents/             # Custom agent definitions
+└── CLAUDE.md               # System prompt override
 ```
 
 ---

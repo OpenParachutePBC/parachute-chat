@@ -5,9 +5,9 @@ import 'package:parachute_chat/core/providers/file_system_provider.dart';
 import 'package:parachute_chat/core/services/export_detection_service.dart';
 import '../providers/context_providers.dart';
 
-/// Dialog shown when AGENTS.md or prompts.yaml don't exist
+/// Dialog shown when CLAUDE.md doesn't exist
 ///
-/// Offers to create default files to help the AI understand the user better.
+/// Offers to create default CLAUDE.md to help the AI understand the user better.
 /// If exports are detected, offers to use them to pre-populate the vault.
 class VaultSetupDialog extends ConsumerStatefulWidget {
   const VaultSetupDialog({super.key});
@@ -126,19 +126,12 @@ class _VaultSetupDialogState extends ConsumerState<VaultSetupDialog> {
 
         _SetupItem(
           icon: Icons.description_outlined,
-          title: 'AGENTS.md',
+          title: 'CLAUDE.md',
           subtitle: claudeExport != null && _useClaudeMemories
               ? 'Pre-filled with your Claude context'
               : 'Your profile and vault context',
           isDark: isDark,
           highlight: claudeExport != null && _useClaudeMemories,
-        ),
-        const SizedBox(height: Spacing.sm),
-        _SetupItem(
-          icon: Icons.bolt_outlined,
-          title: 'prompts.yaml',
-          subtitle: 'Quick actions for common tasks',
-          isDark: isDark,
         ),
 
         // Show import tip only if no exports found

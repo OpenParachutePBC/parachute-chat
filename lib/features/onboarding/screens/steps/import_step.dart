@@ -117,22 +117,22 @@ class _ImportStepState extends ConsumerState<ImportStep> {
   int get _totalExistingImports =>
       _existingClaudeImports + _existingChatGPTImports;
 
-  /// Ensure AGENTS.md exists before moving to next step
-  Future<void> _ensureAgentsMdAndContinue() async {
+  /// Ensure CLAUDE.md exists before moving to next step
+  Future<void> _ensureClaudeMdAndContinue() async {
     try {
       final needsSetup = await ref.read(vaultNeedsSetupProvider.future);
       if (needsSetup) {
-        // Create default AGENTS.md
+        // Create default CLAUDE.md
         await ref.read(initializeVaultContextProvider)();
       }
     } catch (e) {
       // Don't block progression if this fails
-      debugPrint('[ImportStep] Error creating AGENTS.md: $e');
+      debugPrint('[ImportStep] Error creating CLAUDE.md: $e');
     }
     widget.onNext();
   }
 
-  /// Skip import but still ensure AGENTS.md exists
+  /// Skip import but still ensure CLAUDE.md exists
   Future<void> _skipAndContinue() async {
     try {
       final needsSetup = await ref.read(vaultNeedsSetupProvider.future);
@@ -140,7 +140,7 @@ class _ImportStepState extends ConsumerState<ImportStep> {
         await ref.read(initializeVaultContextProvider)();
       }
     } catch (e) {
-      debugPrint('[ImportStep] Error creating AGENTS.md on skip: $e');
+      debugPrint('[ImportStep] Error creating CLAUDE.md on skip: $e');
     }
     widget.onSkip();
   }
@@ -1111,7 +1111,7 @@ $memory
             SizedBox(width: Spacing.md),
           if (_phase == _ImportPhase.complete)
             FilledButton(
-              onPressed: _ensureAgentsMdAndContinue,
+              onPressed: _ensureClaudeMdAndContinue,
               child: const Text('Continue'),
             ),
         ],

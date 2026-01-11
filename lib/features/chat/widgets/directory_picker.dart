@@ -137,11 +137,7 @@ class _DirectoryTile extends StatelessWidget {
   });
 
   String? get _contextFileLabel {
-    if (entry.hasAgentsMd && entry.hasClaudeMd) {
-      return 'Has AGENTS.md & CLAUDE.md';
-    } else if (entry.hasAgentsMd) {
-      return 'Has AGENTS.md';
-    } else if (entry.hasClaudeMd) {
+    if (entry.hasClaudeMd) {
       return 'Has CLAUDE.md';
     }
     return null;

@@ -32,16 +32,36 @@ class CollapsibleCodeBlockBuilder extends MarkdownElementBuilder {
     final lines = codeContent.split('\n');
     final lineCount = lines.length;
 
-    // If small enough, render normally (return null to use default)
-    if (lineCount <= _collapseThreshold) {
-      return null;
+    // For large blocks, use our collapsible widget
+    if (lineCount > _collapseThreshold) {
+      return CollapsibleCodeBlock(
+        code: codeContent,
+        lineCount: lineCount,
+        isDark: isDark,
+      );
     }
 
-    // For large blocks, use our collapsible widget
-    return CollapsibleCodeBlock(
-      code: codeContent,
-      lineCount: lineCount,
-      isDark: isDark,
+    // For smaller blocks, render a simple styled code block
+    // (returning null doesn't properly fall back to default rendering)
+    final bgColor = isDark ? BrandColors.nightSurface : BrandColors.cream;
+    final textColor = isDark ? BrandColors.nightText : BrandColors.charcoal;
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: Spacing.xs),
+      padding: const EdgeInsets.all(Spacing.sm),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(Radii.sm),
+      ),
+      child: SelectableText(
+        codeContent,
+        style: TextStyle(
+          color: textColor,
+          fontFamily: 'monospace',
+          fontSize: TypographyTokens.bodySmall,
+          height: 1.4,
+        ),
+      ),
     );
   }
 }

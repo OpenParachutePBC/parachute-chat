@@ -475,8 +475,8 @@ class ChatService {
   /// Get the module prompt info
   ///
   /// Returns information about the Chat module's system prompt including:
-  /// - content: The current prompt text (from AGENTS.md or default)
-  /// - exists: Whether AGENTS.md exists for this module
+  /// - content: The current prompt text (from CLAUDE.md or default)
+  /// - exists: Whether CLAUDE.md exists for this module
   /// - defaultPrompt: The built-in default prompt
   Future<ModulePromptInfo> getModulePrompt({String module = 'chat'}) async {
     try {
@@ -497,9 +497,9 @@ class ChatService {
     }
   }
 
-  /// Save module prompt (AGENTS.md content)
+  /// Save module prompt (CLAUDE.md content)
   ///
-  /// Creates or updates the AGENTS.md file in the module's folder.
+  /// Creates or updates the CLAUDE.md file in the module's folder.
   /// This will override the built-in default system prompt.
   Future<void> saveModulePrompt(String content, {String module = 'chat'}) async {
     try {
@@ -527,15 +527,15 @@ class ChatService {
     );
   }
 
-  Future<AgentsMdInfo> getAgentsMd() async {
+  Future<ClaudeMdInfo> getClaudeMd() async {
     final info = await getModulePrompt();
-    return AgentsMdInfo(
+    return ClaudeMdInfo(
       exists: info.exists,
       content: info.exists ? info.content : null,
     );
   }
 
-  Future<void> saveAgentsMd(String content) async {
+  Future<void> saveClaudeMd(String content) async {
     await saveModulePrompt(content);
   }
 
@@ -672,10 +672,10 @@ class ChatService {
   }
 
   // ============================================================
-  // Context Folders (AGENTS.md hierarchy)
+  // Context Folders (CLAUDE.md hierarchy)
   // ============================================================
 
-  /// Get available context folders (folders with AGENTS.md or CLAUDE.md)
+  /// Get available context folders (folders with CLAUDE.md)
   ///
   /// Returns folders that can be selected as context for a session.
   Future<List<ContextFolder>> getContextFolders() async {
@@ -703,7 +703,7 @@ class ChatService {
 
   /// Get the context chain for selected folders
   ///
-  /// Returns the full parent chain of AGENTS.md files.
+  /// Returns the full parent chain of CLAUDE.md files.
   Future<ContextChain> getContextChain(List<String> folderPaths) async {
     try {
       final foldersParam = folderPaths.join(',');
@@ -833,7 +833,7 @@ class ChatService {
   /// Returns a stream of events as they arrive
   ///
   /// [systemPrompt] - Custom system prompt for this session
-  /// If not provided, the server will use the module's AGENTS.md or default prompt
+  /// If not provided, the server will use the module's CLAUDE.md or default prompt
   ///
   /// [priorConversation] - For continued conversations, formatted prior messages
   /// that go into the system prompt (not shown in user message)

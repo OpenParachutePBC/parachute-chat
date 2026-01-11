@@ -29,8 +29,8 @@ class VaultEntry {
   bool get isDirectory => type == 'directory';
   bool get isFile => type == 'file';
 
-  /// Whether this folder has context files (AGENTS.md or CLAUDE.md)
-  bool get hasContextFile => hasAgentsMd || hasClaudeMd;
+  /// Whether this folder has context files (CLAUDE.md)
+  bool get hasContextFile => hasClaudeMd;
 
   factory VaultEntry.fromJson(Map<String, dynamic> json) {
     return VaultEntry(

@@ -22,7 +22,7 @@ final vaultContextStatusProvider = FutureProvider<VaultContextStatus>((ref) asyn
   return service.checkStatus();
 });
 
-/// Whether vault needs setup (AGENTS.md or prompts.yaml missing)
+/// Whether vault needs setup (CLAUDE.md missing)
 final vaultNeedsSetupProvider = FutureProvider<bool>((ref) async {
   final status = await ref.watch(vaultContextStatusProvider.future);
   return status.needsSetup;
@@ -32,10 +32,10 @@ final vaultNeedsSetupProvider = FutureProvider<bool>((ref) async {
 // Content Providers
 // ============================================================
 
-/// Load AGENTS.md content
-final agentsMdProvider = FutureProvider<String?>((ref) async {
+/// Load CLAUDE.md content
+final claudeMdProvider = FutureProvider<String?>((ref) async {
   final service = ref.watch(vaultContextServiceProvider);
-  return service.loadAgentsMd();
+  return service.loadClaudeMd();
 });
 
 // ============================================================
@@ -49,7 +49,7 @@ final initializeVaultContextProvider = Provider<Future<void> Function()>((ref) {
     await service.initializeDefaults();
     // Invalidate status and content providers to refresh
     ref.invalidate(vaultContextStatusProvider);
-    ref.invalidate(agentsMdProvider);
+    ref.invalidate(claudeMdProvider);
   };
 });
 
@@ -60,17 +60,17 @@ final initializeVaultWithMemoriesProvider = Provider<Future<void> Function(Strin
     await service.initializeWithClaudeMemories(memoriesContext);
     // Invalidate status and content providers to refresh
     ref.invalidate(vaultContextStatusProvider);
-    ref.invalidate(agentsMdProvider);
+    ref.invalidate(claudeMdProvider);
   };
 });
 
-/// Save updated AGENTS.md content
-final saveAgentsMdProvider = Provider<Future<bool> Function(String)>((ref) {
+/// Save updated CLAUDE.md content
+final saveClaudeMdProvider = Provider<Future<bool> Function(String)>((ref) {
   final service = ref.watch(vaultContextServiceProvider);
   return (String content) async {
-    final success = await service.saveAgentsMd(content);
+    final success = await service.saveClaudeMd(content);
     if (success) {
-      ref.invalidate(agentsMdProvider);
+      ref.invalidate(claudeMdProvider);
     }
     return success;
   };

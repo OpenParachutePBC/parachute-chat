@@ -12,10 +12,10 @@ final defaultPromptProvider = FutureProvider<DefaultPromptInfo>((ref) async {
   return service.getDefaultPrompt();
 });
 
-/// Provider for fetching AGENTS.md info
-final agentsMdProvider = FutureProvider<AgentsMdInfo>((ref) async {
+/// Provider for fetching CLAUDE.md info
+final claudeMdProvider = FutureProvider<ClaudeMdInfo>((ref) async {
   final service = ref.watch(chatServiceProvider);
-  return service.getAgentsMd();
+  return service.getClaudeMd();
 });
 
 /// Settings section for viewing and customizing the system prompt
@@ -27,7 +27,7 @@ class SystemPromptSection extends ConsumerStatefulWidget {
 }
 
 class _SystemPromptSectionState extends ConsumerState<SystemPromptSection> {
-  Future<void> _copyToAgentsMd(String defaultContent) async {
+  Future<void> _copyToClaudeMd(String defaultContent) async {
     final service = ref.read(chatServiceProvider);
 
     try {
@@ -35,23 +35,23 @@ class _SystemPromptSectionState extends ConsumerState<SystemPromptSection> {
       final contentWithHeader = '''# Custom System Prompt
 
 <!--
-  This file overrides Parachute's built-in default prompt.
-  Edit this to customize how your AI assistant behaves.
+  This file customizes how your AI assistant behaves in Parachute.
+  Edit this to add personality, preferences, or specific instructions.
   Delete this file to return to the default behavior.
 -->
 
 $defaultContent''';
 
-      await service.saveAgentsMd(contentWithHeader);
+      await service.saveClaudeMd(contentWithHeader);
 
       // Invalidate the providers to refresh the UI
       ref.invalidate(defaultPromptProvider);
-      ref.invalidate(agentsMdProvider);
+      ref.invalidate(claudeMdProvider);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Created AGENTS.md - you can now edit it in your vault'),
+            content: const Text('Created CLAUDE.md - you can now edit it in your vault'),
             backgroundColor: BrandColors.success,
             action: SnackBarAction(
               label: 'OK',
@@ -65,7 +65,7 @@ $defaultContent''';
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to create AGENTS.md: $e'),
+            content: Text('Failed to create CLAUDE.md: $e'),
             backgroundColor: BrandColors.error,
           ),
         );
@@ -171,7 +171,7 @@ $defaultContent''';
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final defaultPromptAsync = ref.watch(defaultPromptProvider);
-    final agentsMdAsync = ref.watch(agentsMdProvider);
+    final claudeMdAsync = ref.watch(claudeMdProvider);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -195,19 +195,19 @@ $defaultContent''';
             ),
           ),
           child: defaultPromptAsync.when(
-            data: (promptInfo) => agentsMdAsync.when(
-              data: (agentsMd) => _buildContent(
+            data: (promptInfo) => claudeMdAsync.when(
+              data: (claudeMd) => _buildContent(
                 context,
                 isDark,
                 promptInfo,
-                agentsMd,
+                claudeMd,
               ),
               loading: () => _buildLoading(isDark),
               error: (e, _) => _buildContent(
                 context,
                 isDark,
                 promptInfo,
-                const AgentsMdInfo(exists: false),
+                const ClaudeMdInfo(exists: false),
               ),
             ),
             loading: () => _buildLoading(isDark),
@@ -258,9 +258,9 @@ $defaultContent''';
     BuildContext context,
     bool isDark,
     DefaultPromptInfo promptInfo,
-    AgentsMdInfo agentsMd,
+    ClaudeMdInfo claudeMd,
   ) {
-    final hasOverride = agentsMd.exists;
+    final hasOverride = claudeMd.exists;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -299,7 +299,7 @@ $defaultContent''';
                     const SizedBox(height: Spacing.xs),
                     Text(
                       hasOverride
-                          ? 'Your AGENTS.md overrides the default'
+                          ? 'Your CLAUDE.md overrides the default'
                           : 'Parachute\'s built-in system prompt',
                       style: TextStyle(
                         fontSize: TypographyTokens.labelSmall,
@@ -356,7 +356,7 @@ $defaultContent''';
                 _ActionTile(
                   icon: Icons.edit_outlined,
                   title: 'Customize Prompt',
-                  subtitle: 'Copy default to AGENTS.md and edit',
+                  subtitle: 'Copy default to CLAUDE.md and edit',
                   onTap: () => _showCustomizeDialog(context, promptInfo.content, isDark),
                   isDark: isDark,
                   accent: true,
@@ -368,11 +368,11 @@ $defaultContent''';
                 // View current override
                 _ActionTile(
                   icon: Icons.description_outlined,
-                  title: 'View Current AGENTS.md',
+                  title: 'View Current CLAUDE.md',
                   subtitle: 'See your custom system prompt',
                   onTap: () => _showPromptViewer(
                     context,
-                    agentsMd.content ?? '',
+                    claudeMd.content ?? '',
                     isDark,
                   ),
                   isDark: isDark,
@@ -405,8 +405,8 @@ $defaultContent''';
               Expanded(
                 child: Text(
                   hasOverride
-                      ? 'Edit AGENTS.md in your vault to change behavior. Delete it to return to default.'
-                      : 'Create AGENTS.md in your vault root to customize.',
+                      ? 'Edit CLAUDE.md in your vault to change behavior. Delete it to return to default.'
+                      : 'Create CLAUDE.md in your vault root to customize.',
                   style: TextStyle(
                     fontSize: TypographyTokens.labelSmall,
                     color: isDark
@@ -447,7 +447,7 @@ $defaultContent''';
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'This will create AGENTS.md in your vault with the default prompt as a starting point.',
+              'This will create CLAUDE.md in your vault with the default prompt as a starting point.',
               style: TextStyle(
                 color: isDark ? BrandColors.nightText : BrandColors.charcoal,
               ),
@@ -471,7 +471,7 @@ $defaultContent''';
                   const SizedBox(width: Spacing.sm),
                   Expanded(
                     child: Text(
-                      'You can edit AGENTS.md in any text editor or Obsidian.',
+                      'You can edit CLAUDE.md in any text editor or Obsidian.',
                       style: TextStyle(
                         fontSize: TypographyTokens.labelSmall,
                         color: isDark
@@ -498,7 +498,7 @@ $defaultContent''';
           FilledButton.icon(
             onPressed: () => Navigator.pop(context, true),
             icon: const Icon(Icons.add, size: 18),
-            label: const Text('Create AGENTS.md'),
+            label: const Text('Create CLAUDE.md'),
             style: FilledButton.styleFrom(
               backgroundColor: isDark ? BrandColors.nightForest : BrandColors.forest,
             ),
@@ -508,7 +508,7 @@ $defaultContent''';
     );
 
     if (confirmed == true) {
-      await _copyToAgentsMd(defaultContent);
+      await _copyToClaudeMd(defaultContent);
     }
   }
 }

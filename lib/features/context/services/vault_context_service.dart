@@ -2,12 +2,13 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:parachute_chat/core/services/file_system_service.dart';
 
-/// Service for managing vault context files (AGENTS.md)
+/// Service for managing vault context files (CLAUDE.md)
 ///
-/// These files help orient the AI to understand:
-/// - Its role as a thinking companion (not a coding assistant)
-/// - The structure and contents of the vault
-/// - Who the user is and what they care about
+/// CLAUDE.md is auto-loaded by the Claude SDK when set as working directory.
+/// This service manages the vault's root CLAUDE.md which provides:
+/// - Role orientation (thinking companion, not just coding assistant)
+/// - Vault structure documentation
+/// - User context and preferences
 class VaultContextService {
   final FileSystemService _fileSystem;
 
@@ -17,9 +18,9 @@ class VaultContextService {
   // File Paths
   // ============================================================
 
-  Future<String> get _agentsMdPath async {
+  Future<String> get _claudeMdPath async {
     final root = await _fileSystem.getRootPath();
-    return '$root/AGENTS.md';
+    return '$root/CLAUDE.md';
   }
 
   // ============================================================
@@ -28,11 +29,11 @@ class VaultContextService {
 
   /// Check if vault context files exist
   Future<VaultContextStatus> checkStatus() async {
-    final agentsPath = await _agentsMdPath;
-    final agentsExists = await File(agentsPath).exists();
+    final claudePath = await _claudeMdPath;
+    final claudeExists = await File(claudePath).exists();
 
     return VaultContextStatus(
-      agentsMdExists: agentsExists,
+      claudeMdExists: claudeExists,
     );
   }
 
@@ -40,46 +41,44 @@ class VaultContextService {
   Future<void> initializeDefaults() async {
     final status = await checkStatus();
 
-    if (!status.agentsMdExists) {
-      await _createDefaultAgentsMd();
+    if (!status.claudeMdExists) {
+      await _createDefaultClaudeMd();
     }
   }
 
   // ============================================================
-  // AGENTS.md
+  // CLAUDE.md
   // ============================================================
 
-  /// Load the AGENTS.md content
-  Future<String?> loadAgentsMd() async {
-    final path = await _agentsMdPath;
+  /// Load the CLAUDE.md content
+  Future<String?> loadClaudeMd() async {
+    final path = await _claudeMdPath;
     return _fileSystem.readFileAsString(path);
   }
 
-  /// Save updated AGENTS.md content
-  Future<bool> saveAgentsMd(String content) async {
-    final path = await _agentsMdPath;
+  /// Save updated CLAUDE.md content
+  Future<bool> saveClaudeMd(String content) async {
+    final path = await _claudeMdPath;
     return _fileSystem.writeFileAsString(path, content);
   }
 
-  Future<void> _createDefaultAgentsMd() async {
-    final path = await _agentsMdPath;
-    debugPrint('[VaultContextService] Creating default AGENTS.md');
-    await _fileSystem.writeFileAsString(path, _defaultAgentsMd);
+  Future<void> _createDefaultClaudeMd() async {
+    final path = await _claudeMdPath;
+    debugPrint('[VaultContextService] Creating default CLAUDE.md');
+    await _fileSystem.writeFileAsString(path, _defaultClaudeMd);
   }
 
-  /// Create AGENTS.md with context from Claude memories
+  /// Create CLAUDE.md with context from Claude memories
   ///
-  /// Note: Claude memories are now stored in contexts/general-context.md
-  /// AGENTS.md focuses on system orientation, not user context
-  Future<void> createAgentsMdWithClaudeContext(String claudeMemoriesContext) async {
-    // AGENTS.md now focuses on system orientation
-    // User context (Claude memories) goes in contexts/general-context.md
-    await _createDefaultAgentsMd();
+  /// User context (Claude memories) goes in Chat/contexts/general-context.md
+  /// CLAUDE.md focuses on system orientation
+  Future<void> createClaudeMdWithContext(String claudeMemoriesContext) async {
+    await _createDefaultClaudeMd();
 
     // Also ensure general-context.md is created with Claude memories
     if (claudeMemoriesContext.isNotEmpty) {
       final root = await _fileSystem.getRootPath();
-      final contextsPath = '$root/contexts';
+      final contextsPath = '$root/Chat/contexts';
       await _fileSystem.ensureDirectoryExists(contextsPath);
 
       final generalContextPath = '$contextsPath/general-context.md';
@@ -103,11 +102,11 @@ $claudeMemoriesContext
   Future<void> initializeWithClaudeMemories(String? memoriesContext) async {
     final status = await checkStatus();
 
-    if (!status.agentsMdExists) {
+    if (!status.claudeMdExists) {
       if (memoriesContext != null && memoriesContext.isNotEmpty) {
-        await createAgentsMdWithClaudeContext(memoriesContext);
+        await createClaudeMdWithContext(memoriesContext);
       } else {
-        await _createDefaultAgentsMd();
+        await _createDefaultClaudeMd();
       }
     }
   }
@@ -116,80 +115,82 @@ $claudeMemoriesContext
   // Default File Contents
   // ============================================================
 
-  static const String _defaultAgentsMd = '''# Parachute Vault Agent
+  static const String _defaultClaudeMd = '''# Parachute Vault
 
-You are the vault agent for Parachute - an open, local-first tool for connected thinking.
+> Your extended mind - local-first, voice-first AI tooling for connected thinking
 
-## Your Role
+---
 
-You are a **thinking partner and memory extension**, not primarily a coding assistant. Help the user:
+## Role
+
+You are a **thinking partner and memory extension**, not just a coding assistant. Help the user:
 - Think through ideas and problems
-- Find and connect information across their vault
 - Remember context from past conversations
-- Surface relevant notes and patterns they might not see
+- Explore topics and make connections
+- Build software when needed
+
+## Communication Style
+
+- **Be conversational** - This is a thinking partnership
+- **Ask good questions** - Help think through problems, don't just answer
+- **Be direct** - Skip flattery, respond to what's actually being asked
+- **Voice-aware** - Input may be voice transcripts (informal, may have errors)
+
+## When to Search the Vault
+
+Search past conversations and journals when:
+- User asks for personalized recommendations
+- User references past conversations or projects
+- User asks about their own thoughts, ideas, or decisions
+- You need context about preferences or history
+
+Use web search for external/current information.
+
+---
+
+## Identity
+
+@Chat/contexts/general-context.md
+
+---
 
 ## Vault Structure
 
-This vault contains:
-
 ```
-Daily/              # Daily journal entries with voice transcripts
-  YYYY-MM-DD.md     # One file per day, includes recordings and reflections
-
-assets/             # Audio files organized by month
-  YYYY-MM/          # Monthly subfolders for recordings
-
-agent-sessions/     # Chat conversation history
-  {session-id}.md   # Searchable record of past conversations
-
-contexts/           # User context (imported from Claude, etc.)
-  general-context.md  # Core context about the user (auto-loaded)
-  {project}.md        # Project-specific context (loaded on request)
-
-.parachute/         # App data (search index, etc.)
-  search.db         # Vector search index
+~/Parachute/
+├── Daily/          # Voice journal entries
+├── Chat/           # AI conversations
+├── projects/       # Code projects
+├── Coding/         # Other code work
+├── Areas/          # Life areas
+├── Writings/       # Written content
+├── assets/         # Media files
+├── .claude/        # Skills and agents
+└── .parachute/     # System files
 ```
 
-## Your Context
+---
 
-Your core context about the user is loaded from `contexts/general-context.md`. This contains memories, preferences, and background imported from their previous AI conversations.
+## Philosophy
 
-When working on specific topics, check `contexts/` for relevant project context files. Read them when the conversation would benefit from that context.
+This vault is part of **Parachute** - local-first, voice-first AI tooling.
 
-## Tools Available
-
-- **Search (Glob, Grep)**: Find files and search content. Use these liberally to find relevant context before answering.
-- **Read**: Look at specific files. Always prefer reading over guessing.
-- **Write/Edit**: Help capture and refine ideas. Ask before major changes.
-- **Bash**: Run commands when needed.
-- **WebSearch/WebFetch**: Look things up online when helpful.
-
-## How to Help
-
-1. **Search first**: When asked about something, search the vault for relevant context before answering.
-2. **Connect dots**: Surface connections between notes, past conversations, and ideas.
-3. **Reference sources**: When you find relevant notes, mention them so the user can explore further.
-4. **Be conversational**: This is a thinking partnership, not a formal assistant relationship.
-5. **Ask good questions**: Help the user think through problems, don't just answer.
-
-## Interaction Style
-
-- Be concise but thoughtful
-- Show reasoning when it helps clarify your thinking
-- Ask clarifying questions when uncertain
-- Suggest connections the user might not see
-- Remember: you have access to their vault - use it
+**Core Principles:**
+- **Local-First** - Data stays on your devices; you control what goes to the cloud
+- **Voice-First** - More natural than typing; meets people where they think
+- **Open & Interoperable** - Standard formats (markdown), works with Obsidian
+- **Thoughtful AI** - Enhance thinking, don't replace it
 ''';
 }
 
 /// Status of vault context files
 class VaultContextStatus {
-  final bool agentsMdExists;
+  final bool claudeMdExists;
 
   const VaultContextStatus({
-    required this.agentsMdExists,
+    required this.claudeMdExists,
   });
 
-  bool get isFullyInitialized => agentsMdExists;
-  bool get needsSetup => !agentsMdExists;
+  bool get isFullyInitialized => claudeMdExists;
+  bool get needsSetup => !claudeMdExists;
 }

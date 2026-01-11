@@ -209,7 +209,7 @@ class _ChatImportSectionState extends ConsumerState<ChatImportSection> {
         filesAffected = contextFiles.length;
       }
 
-      // Also initialize vault with memories for AGENTS.md (legacy support)
+      // Also initialize vault CLAUDE.md with Claude memories
       final exportService = ref.read(exportDetectionServiceProvider);
       final memoriesContext = await exportService.formatClaudeMemoriesAsContext(
         _detectedExport!.path,

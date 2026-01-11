@@ -1,16 +1,16 @@
-/// Represents a folder that contains AGENTS.md or CLAUDE.md context files.
+/// Represents a folder that contains CLAUDE.md context files.
 ///
 /// Context folders are discovered throughout the vault and can be selected
 /// to load context for a chat session. When selected, the full parent chain
-/// of AGENTS.md files is included automatically.
+/// of CLAUDE.md files is included automatically.
 class ContextFolder {
   /// Path relative to vault root (e.g., "Projects/parachute" or "" for root)
   final String path;
 
-  /// Which context file exists: "AGENTS.md" or "CLAUDE.md"
+  /// Which context file exists (typically "CLAUDE.md")
   final String contextFile;
 
-  /// Whether this folder has AGENTS.md
+  /// Whether this folder has AGENTS.md (legacy, kept for backwards compatibility)
   final bool hasAgentsMd;
 
   /// Whether this folder has CLAUDE.md
@@ -30,7 +30,7 @@ class ContextFolder {
   factory ContextFolder.fromJson(Map<String, dynamic> json) {
     return ContextFolder(
       path: json['path'] as String? ?? '',
-      contextFile: json['context_file'] as String? ?? 'AGENTS.md',
+      contextFile: json['context_file'] as String? ?? 'CLAUDE.md',
       hasAgentsMd: json['has_agents_md'] as bool? ?? false,
       hasClaudeMd: json['has_claude_md'] as bool? ?? false,
       displayName: json['display_name'] as String? ?? json['path'] as String? ?? 'Root',
@@ -64,7 +64,7 @@ class ContextFolder {
 
 /// Represents a file in the context chain (with level info)
 class ContextChainFile {
-  /// Path relative to vault root (e.g., "Projects/parachute/AGENTS.md")
+  /// Path relative to vault root (e.g., "Projects/parachute/CLAUDE.md")
   final String path;
 
   /// Folder path (e.g., "Projects/parachute")
