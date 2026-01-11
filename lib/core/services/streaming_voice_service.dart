@@ -69,18 +69,10 @@ class StreamingTranscriptionState {
   }
 
   /// Get all text for display
-  /// During recording: shows current rolling transcription only
-  /// After recording: use getStreamingTranscript() for final assembled text
+  /// Shows only confirmed/final text from VAD-detected segments.
+  /// No interim text during speech - simpler, no duplicates.
   String get displayText {
-    final parts = <String>[];
-
-    // During recording, ONLY show the current LocalAgreement state
-    // Don't mix in confirmedSegments - they're for final assembly only
-    if (confirmedText.isNotEmpty) parts.add(confirmedText);
-    if (tentativeText.isNotEmpty) parts.add(tentativeText);
-    if (interimText.isNotEmpty) parts.add(interimText);
-
-    return parts.join(' ').trim();
+    return confirmedSegments.join(' ').trim();
   }
 }
 
@@ -274,8 +266,9 @@ class StreamingVoiceService {
           : TranscriptionModelStatus.initializing;
       debugPrint('[StreamingVoice] Initial model status: $_modelStatus');
 
-      // Start re-transcription loop
-      _startReTranscriptionLoop();
+      // NOTE: Re-transcription loop disabled - using richardtate VAD-only approach
+      // No interim text during speech, only final text after VAD pauses
+      // _startReTranscriptionLoop();
 
       // Start recording duration timer
       _startRecordingDurationTimer();
@@ -695,21 +688,19 @@ class StreamingVoiceService {
     return pos < interim.length ? interim.substring(pos).trim() : '';
   }
 
-  /// Final transcription on stop - optimized to capture final words
-  /// Unlike _transcribeRollingBuffer which strips overlap, this preserves everything
+  /// Final transcription for any remaining audio in rolling buffer
+  /// Simple: just transcribe what's there and add to confirmedSegments
   Future<void> _doFinalTranscription() async {
     if (_rollingAudioBuffer.isEmpty) return;
-    if (_rollingAudioBuffer.length < 16000) return;
 
     try {
-      debugPrint('[StreamingVoice] Final transcription with ${_rollingAudioBuffer.length} samples');
+      debugPrint('[StreamingVoice] Final transcription: ${_rollingAudioBuffer.length} samples');
 
-      // Take the entire rolling buffer (already includes silence padding)
       final samplesToTranscribe = List<int>.from(_rollingAudioBuffer);
 
       // Save to temp file
       final tempDir = await getTemporaryDirectory();
-      final tempPath = '${tempDir.path}/final_flush_${DateTime.now().millisecondsSinceEpoch}.wav';
+      final tempPath = '${tempDir.path}/final_${DateTime.now().millisecondsSinceEpoch}.wav';
 
       await _saveSamplesToWav(samplesToTranscribe, tempPath);
 
@@ -721,87 +712,15 @@ class StreamingVoiceService {
         await File(tempPath).delete();
       } catch (_) {}
 
-      final fullTranscript = result.text.trim();
-      debugPrint('[StreamingVoice] Final flush transcript: "$fullTranscript"');
-
-      if (fullTranscript.isEmpty) {
-        // Nothing new, just move interim to confirmed if present
-        if (_interimText.isNotEmpty) {
-          _confirmedSegments.add(_interimText);
-          _interimText = '';
-          debugPrint('[StreamingVoice] Moved interim text to confirmed');
-        }
-        return;
-      }
-
-      // Build what we already have confirmed
-      final confirmedSoFar = _confirmedSegments.join(' ').trim();
-
-      // If the full transcript contains more than what we've confirmed,
-      // extract the new portion
-      if (confirmedSoFar.isEmpty) {
-        // Nothing confirmed yet - use entire transcript
-        _confirmedSegments.clear();
-        _confirmedSegments.add(fullTranscript);
-        _interimText = '';
-        debugPrint('[StreamingVoice] Final: used full transcript (nothing confirmed before)');
-      } else {
-        // Find where our confirmed text ends in the full transcript
-        final confirmedLower = confirmedSoFar.toLowerCase();
-        final fullLower = fullTranscript.toLowerCase();
-
-        String newText = '';
-
-        // Try to find the confirmed text within the full transcript
-        final confirmedIndex = fullLower.indexOf(confirmedLower);
-        if (confirmedIndex != -1) {
-          // Extract everything after the confirmed portion
-          final afterConfirmed = confirmedIndex + confirmedLower.length;
-          if (afterConfirmed < fullTranscript.length) {
-            newText = fullTranscript.substring(afterConfirmed).trim();
-          }
-        } else {
-          // Try suffix matching - find longest suffix of confirmed that matches prefix of full
-          for (int i = min(confirmedLower.length, 50); i >= 5; i--) {
-            final suffix = confirmedLower.substring(confirmedLower.length - i);
-            if (fullLower.startsWith(suffix)) {
-              newText = fullTranscript.substring(i).trim();
-              break;
-            }
-          }
-
-          // If no match found, check if we're missing ending words
-          if (newText.isEmpty && _interimText.isNotEmpty) {
-            newText = _interimText;
-          } else if (newText.isEmpty) {
-            // Last resort: if full transcript is longer, take the difference
-            // This handles cases where Parakeet produces slightly different text
-            final fullWords = fullTranscript.split(RegExp(r'\s+'));
-            final confirmedWords = confirmedSoFar.split(RegExp(r'\s+'));
-            if (fullWords.length > confirmedWords.length) {
-              newText = fullWords.sublist(confirmedWords.length).join(' ');
-            }
-          }
-        }
-
-        if (newText.isNotEmpty) {
-          _confirmedSegments.add(newText);
-          debugPrint('[StreamingVoice] Final: added new text "$newText"');
-        } else if (_interimText.isNotEmpty) {
-          _confirmedSegments.add(_interimText);
-          debugPrint('[StreamingVoice] Final: moved interim "$_interimText" to confirmed');
-        }
-        _interimText = '';
+      final transcribedText = result.text.trim();
+      if (transcribedText.isNotEmpty) {
+        _confirmedSegments.add(transcribedText);
+        debugPrint('[StreamingVoice] Final segment: "$transcribedText"');
       }
 
       _emitStreamingState();
     } catch (e) {
       debugPrint('[StreamingVoice] Final transcription failed: $e');
-      // Still preserve any interim text
-      if (_interimText.isNotEmpty) {
-        _confirmedSegments.add(_interimText);
-        _interimText = '';
-      }
     }
   }
 
@@ -837,32 +756,24 @@ class StreamingVoiceService {
     return text.toLowerCase().replaceAll(RegExp(r'[^\w\s]'), '').replaceAll(RegExp(r'\s+'), ' ').trim();
   }
 
-  /// Handle chunk ready from SmartChunker
+  /// Handle chunk ready from SmartChunker (VAD detected pause)
+  ///
+  /// Richardtate approach: On VAD pause, transcribe ONLY the chunk audio,
+  /// add result to confirmedSegments, then clear the rolling buffer.
+  /// This avoids duplicates by never re-transcribing overlapping audio.
   void _handleChunk(List<int> samples) {
-    debugPrint('[LocalAgreement] VAD pause detected! (${samples.length} samples)');
+    debugPrint('[StreamingVoice] VAD pause detected! (${samples.length} samples)');
 
-    // VAD detected a pause - this is used for segment-based transcription
-    // For streaming display, we DON'T clear state - let LocalAgreement handle it
-    final currentText = '$_confirmedText $_tentativeText $_interimText'.trim();
-    if (currentText.isNotEmpty) {
-      debugPrint('[LocalAgreement] VAD pause - current display: '
-          '"${currentText.length > 50 ? '${currentText.substring(0, 50)}...' : currentText}"');
-    }
-
-    // Save to confirmedSegments for final transcript assembly
-    if (currentText.isNotEmpty) {
-      final isDuplicate = _confirmedSegments.isNotEmpty &&
-          _normalizeForComparison(_confirmedSegments.last) == _normalizeForComparison(currentText);
-
-      if (!isDuplicate) {
-        _confirmedSegments.add(currentText);
-        debugPrint('[LocalAgreement] Saved segment ${_confirmedSegments.length}');
-      }
-    }
-
-    // Queue for transcription
+    // Queue chunk for transcription - this will add to confirmedSegments
     final segmentIndex = _nextSegmentIndex++;
     _queueSegmentForProcessing(samples, segmentIndex);
+
+    // Clear rolling buffer state - we're done with this audio
+    _rollingAudioBuffer.clear();
+    _previousTranscription = null;
+    _confirmedText = '';
+    _tentativeText = '';
+    _interimText = '';
   }
 
   /// Queue a segment for transcription
@@ -907,20 +818,13 @@ class StreamingVoiceService {
         await File(tempPath).delete();
       } catch (_) {}
 
-      if (result.text.trim().isEmpty) return;
-
       final transcribedText = result.text.trim();
+      if (transcribedText.isEmpty) return;
 
-      // Update confirmed segment
-      final confirmedIdx = _segmentToConfirmedIndex[segment.index];
-      if (confirmedIdx != null && confirmedIdx < _confirmedSegments.length) {
-        _confirmedSegments[confirmedIdx] = transcribedText;
-      } else {
-        _confirmedSegments.add(transcribedText);
-      }
-
+      // Simply add to confirmed segments - no overlap since each chunk is unique audio
+      _confirmedSegments.add(transcribedText);
       _emitStreamingState();
-      debugPrint('[StreamingVoice] Segment ${segment.index} done: "$transcribedText"');
+      debugPrint('[StreamingVoice] Segment ${segment.index}: "$transcribedText"');
     } catch (e) {
       debugPrint('[StreamingVoice] Failed to transcribe segment: $e');
     }
@@ -1011,24 +915,24 @@ class StreamingVoiceService {
       // Wait for stream to settle
       await Future.delayed(const Duration(milliseconds: 300));
 
-      // === PARAKEET FINAL FLUSH ===
-      // Parakeet's internal buffers need silence to flush the final word(s)
-      // Without this, the last 1-2 words are often lost
-      debugPrint('[StreamingVoice] Flushing Parakeet with silence...');
-      final silenceBuffer = List<int>.filled(16000 * 2, 0); // 2 seconds of silence
-      _rollingAudioBuffer.addAll(silenceBuffer);
-
-      // Do one final re-transcription with the silence-padded buffer
-      // This captures any final words that Parakeet was holding
-      if (_rollingAudioBuffer.length > 16000) {
-        await _doFinalTranscription();
+      // Flush chunker FIRST - this triggers _handleChunk for any remaining audio
+      // The chunker holds audio that hasn't hit a VAD pause yet
+      if (_chunker != null) {
+        debugPrint('[StreamingVoice] Flushing chunker for final audio...');
+        _chunker!.flush();
+        _chunker = null;
       }
 
-      // Flush chunker
-      if (_chunker != null) {
-        _chunker!.flush();
-        await Future.delayed(const Duration(milliseconds: 50));
-        _chunker = null;
+      // Wait for any queued segments to finish processing
+      while (_isProcessingQueue) {
+        await Future.delayed(const Duration(milliseconds: 100));
+      }
+
+      // If there's still audio in rolling buffer (after VAD flush), transcribe it
+      // This catches edge cases where flush didn't produce a chunk
+      if (_rollingAudioBuffer.length > 8000) { // At least 0.5s of audio
+        debugPrint('[StreamingVoice] Transcribing remaining buffer: ${_rollingAudioBuffer.length} samples');
+        await _doFinalTranscription();
       }
 
       if (_noiseFilter != null) {
