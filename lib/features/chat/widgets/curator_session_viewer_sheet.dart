@@ -5,12 +5,13 @@ import 'package:parachute_chat/core/theme/design_tokens.dart';
 import '../models/curator_session.dart';
 import '../providers/chat_providers.dart';
 
-/// Bottom sheet showing curator session as a chat conversation
+/// Bottom sheet showing curator session - focused on what the curator DID
 ///
-/// Displays:
-/// - Chat view of curator's conversation (what context it saw, what it responded)
-/// - Tool calls shown as special message blocks
-/// - Task history tab for debugging
+/// Design principles:
+/// - Collapse verbose context messages by default
+/// - Highlight tool calls (title updates, log entries) prominently
+/// - Show clear summary of curator actions at top
+/// - Make it easy to understand what changed
 class CuratorSessionViewerSheet extends ConsumerStatefulWidget {
   final String sessionId;
 
@@ -89,7 +90,6 @@ class _CuratorSessionViewerSheetState
         ),
       ),
       child: Column(
-        mainAxisSize: MainAxisSize.min,
         children: [
           // Handle bar
           Container(
@@ -171,7 +171,7 @@ class _CuratorSessionViewerSheetState
           const Divider(height: 1),
 
           // Tab content
-          Flexible(
+          Expanded(
             child: TabBarView(
               controller: _tabController,
               children: [
@@ -187,6 +187,9 @@ class _CuratorSessionViewerSheetState
 }
 
 /// Chat view showing the curator's conversation
+///
+/// Shows a summary header with latest actions, then the conversation
+/// with context messages collapsed by default.
 class _CuratorChatView extends ConsumerWidget {
   final String sessionId;
 
@@ -197,13 +200,27 @@ class _CuratorChatView extends ConsumerWidget {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final messagesAsync = ref.watch(curatorMessagesProvider(sessionId));
+    final infoAsync = ref.watch(curatorInfoProvider(sessionId));
 
     return messagesAsync.when(
       data: (data) {
         if (!data.hasMessages) {
           return _buildEmptyState(isDark, data.errorMessage);
         }
-        return _buildChatList(context, isDark, data.messages);
+        return Column(
+          children: [
+            // Summary header showing latest curator actions
+            infoAsync.when(
+              data: (info) => _buildSummaryHeader(context, isDark, info),
+              loading: () => const SizedBox.shrink(),
+              error: (_, _) => const SizedBox.shrink(),
+            ),
+            // Message list
+            Expanded(
+              child: _buildChatList(context, isDark, data.messages),
+            ),
+          ],
+        );
       },
       loading: () => const Center(
         child: Padding(
@@ -223,6 +240,110 @@ class _CuratorChatView extends ConsumerWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  /// Build a summary header showing the latest curator actions
+  Widget _buildSummaryHeader(BuildContext context, bool isDark, CuratorInfo info) {
+    // Find the most recent completed task with results
+    final recentTask = info.recentTasks
+        .where((t) => t.status == CuratorTaskStatus.completed && t.result != null)
+        .toList();
+
+    if (recentTask.isEmpty) return const SizedBox.shrink();
+
+    final latest = recentTask.first;
+    final result = latest.result!;
+
+    // Only show if there are actual actions
+    if (!result.titleUpdated && !result.logged && result.actions.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      margin: const EdgeInsets.all(Spacing.md),
+      padding: const EdgeInsets.all(Spacing.md),
+      decoration: BoxDecoration(
+        color: isDark
+            ? BrandColors.nightForest.withValues(alpha: 0.15)
+            : BrandColors.forest.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(Radii.md),
+        border: Border.all(
+          color: isDark
+              ? BrandColors.nightForest.withValues(alpha: 0.3)
+              : BrandColors.forest.withValues(alpha: 0.2),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.check_circle_outline,
+                size: 16,
+                color: isDark ? BrandColors.nightForest : BrandColors.forest,
+              ),
+              const SizedBox(width: Spacing.xs),
+              Text(
+                'Latest Actions',
+                style: TextStyle(
+                  fontSize: TypographyTokens.labelSmall,
+                  fontWeight: FontWeight.w600,
+                  color: isDark ? BrandColors.nightForest : BrandColors.forest,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: Spacing.sm),
+          // Show what was updated
+          Wrap(
+            spacing: Spacing.sm,
+            runSpacing: Spacing.xs,
+            children: [
+              if (result.titleUpdated && result.newTitle != null)
+                _buildActionChip(
+                  isDark,
+                  icon: Icons.title,
+                  label: 'Title: "${result.newTitle}"',
+                ),
+              if (result.logged)
+                _buildActionChip(
+                  isDark,
+                  icon: Icons.edit_note,
+                  label: 'Updated log',
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildActionChip(bool isDark, {required IconData icon, required String label}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: Spacing.sm, vertical: Spacing.xs),
+      decoration: BoxDecoration(
+        color: isDark ? BrandColors.nightSurface : BrandColors.softWhite,
+        borderRadius: BorderRadius.circular(Radii.sm),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: isDark ? BrandColors.nightText : BrandColors.charcoal),
+          const SizedBox(width: Spacing.xs),
+          Flexible(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: TypographyTokens.bodySmall,
+                color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -287,7 +408,10 @@ class _CuratorChatView extends ConsumerWidget {
 }
 
 /// A single message bubble in the curator chat
-class _CuratorMessageBubble extends StatelessWidget {
+///
+/// User (context) messages are collapsed by default since they're verbose.
+/// Assistant messages with tool calls are shown prominently.
+class _CuratorMessageBubble extends StatefulWidget {
   final CuratorMessage message;
   final bool isDark;
 
@@ -297,43 +421,91 @@ class _CuratorMessageBubble extends StatelessWidget {
   });
 
   @override
+  State<_CuratorMessageBubble> createState() => _CuratorMessageBubbleState();
+}
+
+class _CuratorMessageBubbleState extends State<_CuratorMessageBubble> {
+  // Context messages start collapsed, curator responses start expanded
+  late bool _isExpanded;
+
+  @override
+  void initState() {
+    super.initState();
+    // Collapse user (context) messages by default - they're verbose
+    // Expand assistant messages - they show what curator did
+    _isExpanded = !widget.message.isUser;
+  }
+
+  /// Get a preview of the content (first line or first N chars)
+  String _getPreview(String content) {
+    if (content.isEmpty) return '';
+    final firstLine = content.split('\n').first;
+    if (firstLine.length > 80) {
+      return '${firstLine.substring(0, 77)}...';
+    }
+    return firstLine;
+  }
+
+  /// Check if content is long enough to warrant collapsing
+  bool _isLongContent(String content) {
+    return content.length > 200 || content.split('\n').length > 3;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final isUser = message.isUser;
+    final isUser = widget.message.isUser;
     final alignment = isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start;
     final bubbleColor = isUser
-        ? (isDark ? BrandColors.nightForest.withValues(alpha: 0.3) : BrandColors.forest.withValues(alpha: 0.15))
-        : (isDark ? BrandColors.nightSurfaceElevated : BrandColors.stone);
+        ? (widget.isDark
+            ? BrandColors.nightTextSecondary.withValues(alpha: 0.15)
+            : BrandColors.driftwood.withValues(alpha: 0.1))
+        : (widget.isDark ? BrandColors.nightSurfaceElevated : BrandColors.stone);
+
+    final hasLongContent = _isLongContent(widget.message.content);
+    final showCollapsed = isUser && hasLongContent && !_isExpanded;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: Spacing.md),
       child: Column(
         crossAxisAlignment: alignment,
         children: [
-          // Role label
+          // Role label with expand/collapse for context messages
           Padding(
             padding: const EdgeInsets.only(bottom: Spacing.xs),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  isUser ? Icons.person : Icons.auto_fix_high,
-                  size: 14,
-                  color: isUser
-                      ? (isDark ? BrandColors.nightForest : BrandColors.forest)
-                      : (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood),
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  isUser ? 'Context' : 'Curator',
-                  style: TextStyle(
-                    fontSize: TypographyTokens.labelSmall,
-                    fontWeight: FontWeight.w500,
+            child: InkWell(
+              onTap: hasLongContent ? () => setState(() => _isExpanded = !_isExpanded) : null,
+              borderRadius: BorderRadius.circular(Radii.sm),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    isUser ? Icons.description_outlined : Icons.auto_fix_high,
+                    size: 14,
                     color: isUser
-                        ? (isDark ? BrandColors.nightForest : BrandColors.forest)
-                        : (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood),
+                        ? (widget.isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood)
+                        : (widget.isDark ? BrandColors.nightForest : BrandColors.forest),
                   ),
-                ),
-              ],
+                  const SizedBox(width: 4),
+                  Text(
+                    isUser ? 'Context' : 'Curator',
+                    style: TextStyle(
+                      fontSize: TypographyTokens.labelSmall,
+                      fontWeight: FontWeight.w500,
+                      color: isUser
+                          ? (widget.isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood)
+                          : (widget.isDark ? BrandColors.nightForest : BrandColors.forest),
+                    ),
+                  ),
+                  if (isUser && hasLongContent) ...[
+                    const SizedBox(width: 4),
+                    Icon(
+                      _isExpanded ? Icons.expand_less : Icons.expand_more,
+                      size: 14,
+                      color: widget.isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                    ),
+                  ],
+                ],
+              ),
             ),
           ),
 
@@ -350,23 +522,34 @@ class _CuratorMessageBubble extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Text content
-                if (message.content.isNotEmpty)
-                  SelectableText(
-                    message.content,
-                    style: TextStyle(
-                      fontSize: TypographyTokens.bodyMedium,
-                      color: isDark ? BrandColors.nightText : BrandColors.charcoal,
-                    ),
-                  ),
+                // Text content - collapsed or expanded
+                if (widget.message.content.isNotEmpty)
+                  showCollapsed
+                      ? Text(
+                          _getPreview(widget.message.content),
+                          style: TextStyle(
+                            fontSize: TypographyTokens.bodySmall,
+                            color: widget.isDark
+                                ? BrandColors.nightTextSecondary
+                                : BrandColors.driftwood,
+                            fontStyle: FontStyle.italic,
+                          ),
+                        )
+                      : SelectableText(
+                          widget.message.content,
+                          style: TextStyle(
+                            fontSize: TypographyTokens.bodyMedium,
+                            color: widget.isDark ? BrandColors.nightText : BrandColors.charcoal,
+                          ),
+                        ),
 
-                // Tool calls
-                if (message.hasToolCalls) ...[
-                  if (message.content.isNotEmpty)
+                // Tool calls - always shown prominently
+                if (widget.message.hasToolCalls) ...[
+                  if (widget.message.content.isNotEmpty)
                     const SizedBox(height: Spacing.sm),
-                  ...message.toolCalls!.map((tool) => _ToolCallChip(
+                  ...widget.message.toolCalls!.map((tool) => _ToolCallChip(
                         tool: tool,
-                        isDark: isDark,
+                        isDark: widget.isDark,
                       )),
                 ],
               ],
@@ -483,6 +666,10 @@ class _ToolCallChipState extends State<_ToolCallChip> {
     switch (toolName) {
       case 'update_title':
         return Icons.title;
+      case 'get_session_log':
+        return Icons.history_edu;
+      case 'update_session_log':
+        return Icons.edit_note;
       case 'log_activity':
         return Icons.note_add;
       case 'get_session_info':
