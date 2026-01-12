@@ -643,9 +643,11 @@ class MessageBubble extends ConsumerWidget {
         href.endsWith('.m4a');
 
     if (isAudio) {
-      final path = _resolveAssetPath(href, vaultPath);
-      if (path != null) {
-        _showAudioPlayer(context, path, text);
+      // For remote URLs, use href directly; for local files, resolve the path
+      final isRemoteUrl = href.startsWith('http://') || href.startsWith('https://');
+      final audioPath = isRemoteUrl ? href : _resolveAssetPath(href, vaultPath);
+      if (audioPath != null) {
+        _showAudioPlayer(context, audioPath, text);
       }
       return;
     }

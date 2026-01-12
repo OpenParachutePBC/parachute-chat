@@ -40,18 +40,26 @@ class _InlineAudioPlayerState extends State<InlineAudioPlayer> {
     _initPlayer();
   }
 
+  bool _isUrl(String path) {
+    return path.startsWith('http://') || path.startsWith('https://');
+  }
+
   Future<void> _initPlayer() async {
     try {
-      final file = File(widget.audioPath);
-      if (!await file.exists()) {
-        setState(() {
-          _hasError = true;
-          _errorMessage = 'File not found';
-        });
-        return;
+      // Handle remote URLs vs local files
+      if (_isUrl(widget.audioPath)) {
+        await _player.setUrl(widget.audioPath);
+      } else {
+        final file = File(widget.audioPath);
+        if (!await file.exists()) {
+          setState(() {
+            _hasError = true;
+            _errorMessage = 'File not found';
+          });
+          return;
+        }
+        await _player.setFilePath(widget.audioPath);
       }
-
-      await _player.setFilePath(widget.audioPath);
 
       _positionSub = _player.positionStream.listen((pos) {
         if (mounted) setState(() => _position = pos);
