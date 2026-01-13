@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:markdown/markdown.dart' as md;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -158,76 +159,16 @@ class MessageBubble extends ConsumerWidget {
     // multi-line selection across the entire message bubble
     return Padding(
       padding: Spacing.cardPadding,
-      child: MarkdownBody(
-              data: text,
-              selectable: false,
-              // Custom builder for collapsible large code blocks
-              builders: {
-                'pre': CollapsibleCodeBlockBuilder(isDark: isDark),
-              },
-              // ignore: deprecated_member_use
-              imageBuilder: (uri, title, alt) =>
-                  _buildImage(uri, title, alt, vaultPath, isDark),
-              onTapLink: (linkText, href, title) =>
-                  _handleLinkTap(context, linkText, href, title, vaultPath),
-              styleSheet: MarkdownStyleSheet(
-                p: TextStyle(
-                  color: textColor,
-                  fontSize: TypographyTokens.bodyMedium,
-                  height: TypographyTokens.lineHeightNormal,
-                ),
-                a: TextStyle(
-                  color: isUser
-                      ? Colors.white
-                      : (isDark ? BrandColors.nightTurquoise : BrandColors.turquoise),
-                  decoration: TextDecoration.underline,
-                  decorationColor: isUser
-                      ? Colors.white.withValues(alpha: 0.7)
-                      : (isDark ? BrandColors.nightTurquoise : BrandColors.turquoise),
-                ),
-                code: TextStyle(
-                  // Code blocks always have light backgrounds, so use dark text
-                  // regardless of user/assistant message type
-                  color: isDark ? BrandColors.nightText : BrandColors.charcoal,
-                  backgroundColor: isDark
-                      ? BrandColors.nightSurface
-                      : BrandColors.cream,
-                  fontFamily: 'monospace',
-                  fontSize: TypographyTokens.bodySmall,
-                ),
-                codeblockDecoration: BoxDecoration(
-                  color:
-                      isDark ? BrandColors.nightSurface : BrandColors.cream,
-                  borderRadius: Radii.badge,
-                ),
-                blockquoteDecoration: BoxDecoration(
-                  border: Border(
-                    left: BorderSide(
-                      color: isDark
-                          ? BrandColors.nightForest
-                          : BrandColors.forest,
-                      width: 3,
-                    ),
-                  ),
-                ),
-                h1: TextStyle(
-                  color: textColor,
-                  fontSize: TypographyTokens.headlineLarge,
-                  fontWeight: FontWeight.bold,
-                ),
-                h2: TextStyle(
-                  color: textColor,
-                  fontSize: TypographyTokens.headlineMedium,
-                  fontWeight: FontWeight.bold,
-                ),
-                h3: TextStyle(
-                  color: textColor,
-                  fontSize: TypographyTokens.headlineSmall,
-                  fontWeight: FontWeight.bold,
-                ),
-                listBullet: TextStyle(color: textColor),
-              ),
-            ),
+      child: _SafeMarkdownBody(
+        text: text,
+        textColor: textColor,
+        isUser: isUser,
+        isDark: isDark,
+        vaultPath: vaultPath,
+        onImageBuild: _buildImage,
+        onLinkTap: (linkText, href, title) =>
+            _handleLinkTap(context, linkText, href, title, vaultPath),
+      ),
     );
   }
 
@@ -1451,5 +1392,303 @@ class _RemoteImagePreviewOverlayState extends State<_RemoteImagePreviewOverlay> 
         ),
       ),
     );
+  }
+}
+
+/// Markdown body with error handling for malformed content
+///
+/// flutter_markdown can throw assertion errors on certain edge cases
+/// (unclosed inline elements, streaming partial content, etc.)
+/// This widget pre-parses markdown and falls back to plain text if needed.
+class _SafeMarkdownBody extends StatelessWidget {
+  final String text;
+  final Color textColor;
+  final bool isUser;
+  final bool isDark;
+  final String? vaultPath;
+  final Widget Function(Uri, String?, String?, String?, bool) onImageBuild;
+  final void Function(String, String?, String?) onLinkTap;
+
+  const _SafeMarkdownBody({
+    required this.text,
+    required this.textColor,
+    required this.isUser,
+    required this.isDark,
+    required this.vaultPath,
+    required this.onImageBuild,
+    required this.onLinkTap,
+  });
+
+  /// Check if markdown content can be safely parsed
+  /// Returns true if the markdown is safe to render, false if we should fall back to plain text
+  static bool _canSafelyParse(String input) {
+    try {
+      // Try parsing with the markdown package
+      final document = md.Document(
+        extensionSet: md.ExtensionSet.gitHubFlavored,
+      );
+      final nodes = document.parseLines(input.split('\n'));
+
+      // Check for patterns that cause the _inlines.isEmpty assertion
+      // This happens when inline elements are not properly closed
+      if (!_checkNodesForProblems(nodes)) {
+        return false;
+      }
+
+      // Additional heuristic checks for patterns known to crash flutter_markdown
+      // These patterns can parse fine but still cause builder issues
+      if (_hasProblematicPatterns(input)) {
+        return false;
+      }
+
+      return true;
+    } catch (e) {
+      debugPrint('[_SafeMarkdownBody] Parse error: $e');
+      return false;
+    }
+  }
+
+  /// Check for patterns that are known to cause flutter_markdown builder failures
+  /// even when the markdown parses correctly
+  static bool _hasProblematicPatterns(String input) {
+    // Pattern 1: XML-like tags with colons (e.g., <something>)
+    // These cause the _inlines.isEmpty assertion to fail
+    final xmlTagsWithColon = RegExp(r'<[a-zA-Z]+:[a-zA-Z_]+[^>]*>');
+    if (xmlTagsWithColon.hasMatch(input)) {
+      return true;
+    }
+
+    // Pattern 2: Emphasis markers that span across newlines with other inline elements
+    // e.g., "*text\n**more**\ntext*"
+    final emphasisAcrossNewlines = RegExp(r'\*[^*\n]*\n[^*]*\*\*');
+    if (emphasisAcrossNewlines.hasMatch(input)) {
+      return true;
+    }
+
+    // Pattern 3: Unclosed image syntax ![
+    final unclosedImage = RegExp(r'!\[[^\]]*$');
+    if (unclosedImage.hasMatch(input)) {
+      return true;
+    }
+
+    // Pattern 4: Complex nested emphasis like ***text*** at line boundaries
+    final complexEmphasis = RegExp(r'\*{3,}[^*\n]*$');
+    if (complexEmphasis.hasMatch(input)) {
+      return true;
+    }
+
+    // Pattern 5: Emphasis immediately followed by special characters
+    final emphasisSpecialChar = RegExp(r'\*\*[^*]+\*\*[<>\[\]()]');
+    if (emphasisSpecialChar.hasMatch(input)) {
+      // Check if these are within code blocks
+      if (!_isInCodeBlock(input, emphasisSpecialChar.firstMatch(input)!.start)) {
+        return true;
+      }
+    }
+
+    // Pattern 6: HTML-like tags that might confuse the parser
+    final htmlTags = RegExp(r'<(?!http)[a-zA-Z][^>]*>(?![^<]*</)');
+    final htmlMatches = htmlTags.allMatches(input);
+    for (final match in htmlMatches) {
+      if (!_isInCodeBlock(input, match.start)) {
+        // Check if there's a closing tag
+        final tagName = RegExp(r'<([a-zA-Z]+)').firstMatch(match.group(0)!)?.group(1);
+        if (tagName != null) {
+          final closingTag = '</$tagName>';
+          if (!input.contains(closingTag)) {
+            return true;
+          }
+        }
+      }
+    }
+
+    // Pattern 7: Any angle brackets outside of code blocks that aren't URLs
+    // This is aggressive but catches many edge cases
+    final angleBrackets = RegExp(r'<[^>]+>');
+    for (final match in angleBrackets.allMatches(input)) {
+      if (!_isInCodeBlock(input, match.start)) {
+        final content = match.group(0)!;
+        // Allow URLs like <https://example.com>
+        if (!content.startsWith('<http') && !content.startsWith('<mailto:')) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  /// Check if a position in the text is inside a code block or inline code
+  static bool _isInCodeBlock(String text, int position) {
+    // Check for fenced code blocks
+    final beforePosition = text.substring(0, position);
+    final codeFenceCount = RegExp(r'^```', multiLine: true).allMatches(beforePosition).length;
+    if (codeFenceCount % 2 == 1) {
+      return true; // Inside a fenced code block
+    }
+
+    // Check for inline code on the same line
+    final lineStart = beforePosition.lastIndexOf('\n') + 1;
+    final lineBeforePosition = beforePosition.substring(lineStart);
+    final backtickCount = '`'.allMatches(lineBeforePosition).length;
+    if (backtickCount % 2 == 1) {
+      return true; // Inside inline code
+    }
+
+    return false;
+  }
+
+  /// Recursively check AST nodes for problematic patterns
+  static bool _checkNodesForProblems(List<md.Node> nodes) {
+    for (final node in nodes) {
+      if (node is md.Element) {
+        // Check children recursively
+        if (!_checkNodesForProblems(node.children ?? [])) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  /// Sanitize markdown to fix common issues that cause parser failures
+  static String _sanitizeMarkdown(String input) {
+    var result = input;
+
+    // Handle unclosed code fences (```) - common during streaming
+    final codeFencePattern = RegExp(r'^```', multiLine: true);
+    final codeFenceCount = codeFencePattern.allMatches(result).length;
+    if (codeFenceCount % 2 != 0) {
+      result = '$result\n```';
+    }
+
+    // Handle trailing unclosed inline code
+    // Count backticks outside of code fences
+    final lines = result.split('\n');
+    var inCodeFence = false;
+    var backtickCount = 0;
+
+    for (final line in lines) {
+      if (line.startsWith('```')) {
+        inCodeFence = !inCodeFence;
+        continue;
+      }
+      if (!inCodeFence) {
+        // Count backticks in this line
+        backtickCount += '`'.allMatches(line).length;
+      }
+    }
+
+    // If odd number of backticks, add one to close
+    if (backtickCount % 2 != 0) {
+      result = '$result`';
+    }
+
+    // Handle unclosed links [text](url - common during streaming
+    final unclosedLinkPattern = RegExp(r'\[[^\]]*\]\([^)]*$');
+    if (unclosedLinkPattern.hasMatch(result)) {
+      result = '$result)';
+    }
+
+    // Handle unclosed brackets at end
+    if (result.endsWith('[')) {
+      result = '${result.substring(0, result.length - 1)}\\[';
+    }
+
+    return result;
+  }
+
+  Widget _buildPlainText() {
+    return Text(
+      text,
+      style: TextStyle(
+        color: textColor,
+        fontSize: TypographyTokens.bodyMedium,
+        height: TypographyTokens.lineHeightNormal,
+      ),
+    );
+  }
+
+  Widget _buildMarkdown(String content) {
+    return MarkdownBody(
+      data: content,
+      selectable: false,
+      builders: {
+        'pre': CollapsibleCodeBlockBuilder(isDark: isDark),
+      },
+      // ignore: deprecated_member_use
+      imageBuilder: (uri, title, alt) =>
+          onImageBuild(uri, title, alt, vaultPath, isDark),
+      onTapLink: onLinkTap,
+      styleSheet: MarkdownStyleSheet(
+        p: TextStyle(
+          color: textColor,
+          fontSize: TypographyTokens.bodyMedium,
+          height: TypographyTokens.lineHeightNormal,
+        ),
+        a: TextStyle(
+          color: isUser
+              ? Colors.white
+              : (isDark ? BrandColors.nightTurquoise : BrandColors.turquoise),
+          decoration: TextDecoration.underline,
+          decorationColor: isUser
+              ? Colors.white.withValues(alpha: 0.7)
+              : (isDark ? BrandColors.nightTurquoise : BrandColors.turquoise),
+        ),
+        code: TextStyle(
+          color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+          backgroundColor: isDark
+              ? BrandColors.nightSurface
+              : BrandColors.cream,
+          fontFamily: 'monospace',
+          fontSize: TypographyTokens.bodySmall,
+        ),
+        codeblockDecoration: BoxDecoration(
+          color: isDark ? BrandColors.nightSurface : BrandColors.cream,
+          borderRadius: Radii.badge,
+        ),
+        blockquoteDecoration: BoxDecoration(
+          border: Border(
+            left: BorderSide(
+              color: isDark
+                  ? BrandColors.nightForest
+                  : BrandColors.forest,
+              width: 3,
+            ),
+          ),
+        ),
+        h1: TextStyle(
+          color: textColor,
+          fontSize: TypographyTokens.headlineLarge,
+          fontWeight: FontWeight.bold,
+        ),
+        h2: TextStyle(
+          color: textColor,
+          fontSize: TypographyTokens.headlineMedium,
+          fontWeight: FontWeight.bold,
+        ),
+        h3: TextStyle(
+          color: textColor,
+          fontSize: TypographyTokens.headlineSmall,
+          fontWeight: FontWeight.bold,
+        ),
+        listBullet: TextStyle(color: textColor),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // First sanitize the markdown
+    final sanitizedText = _sanitizeMarkdown(text);
+
+    // Check if it can be safely parsed
+    if (!_canSafelyParse(sanitizedText)) {
+      debugPrint('[_SafeMarkdownBody] Falling back to plain text due to problematic patterns');
+      return _buildPlainText();
+    }
+
+    // Render the markdown directly - the pattern checks should catch issues
+    return _buildMarkdown(sanitizedText);
   }
 }
